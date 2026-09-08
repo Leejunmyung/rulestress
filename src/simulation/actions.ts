@@ -21,9 +21,14 @@ export function actionPrecondition(
     case 'CANCEL_ORDER': {
       const o = state.orders.find((o) => o.id === action.orderId);
       if (!o) return `CANCEL_ORDER: no order ${action.orderId}`;
+      if (o.identityId !== action.identityId) return 'CANCEL_ORDER: order belongs to another identity';
       if (o.status !== 'PAID') return 'CANCEL_ORDER: order not PAID';
       if (o.paymentKind !== 'CASH') return 'CANCEL_ORDER: only CASH orders can be cancelled';
       return null;
+    }
+    default: {
+      const _never: never = action;
+      throw new Error(`unknown action type ${(action as { type: string }).type}`);
     }
   }
 }
@@ -63,6 +68,10 @@ export function applyBaseEffects(
       s = applyEffect(s, { primitive: 'ADD_CASH_REFUNDED', identityId: action.identityId, value: order.amount });
       s = applyEffect(s, { primitive: 'ADD_GOODS', identityId: action.identityId, value: -order.amount });
       return { state: s, events: [{ type: 'ORDER_CANCELLED', identityId: action.identityId, orderId: action.orderId }] };
+    }
+    default: {
+      const _never: never = action;
+      throw new Error(`unknown action type ${(action as { type: string }).type}`);
     }
   }
 }

@@ -25,6 +25,22 @@ describe('actionPrecondition', () => {
     s.orders.push({ id: 'o1', identityId: 'id1', amount: 10000, status: 'PAID', paymentKind: 'POINTS' });
     expect(actionPrecondition(s, { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' }, 3)).toMatch(/CASH/i);
   });
+  it('PURCHASE rejected at maxOrders', () => {
+    const s = blank();
+    s.orders.push(
+      { id: 'o1', identityId: 'id1', amount: 100, status: 'PAID', paymentKind: 'CASH' },
+      { id: 'o2', identityId: 'id1', amount: 100, status: 'PAID', paymentKind: 'CASH' },
+    );
+    expect(actionPrecondition(s, { type: 'PURCHASE', identityId: 'id1', amount: 100 }, 2)).toMatch(/maxOrders/i);
+  });
+  it('CANCEL_ORDER: valid returns null; missing / not-PAID rejected', () => {
+    const s = blank();
+    s.orders.push({ id: 'o1', identityId: 'id1', amount: 100, status: 'PAID', paymentKind: 'CASH' });
+    expect(actionPrecondition(s, { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' }, 3)).toBeNull();
+    expect(actionPrecondition(s, { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'oX' }, 3)).toMatch(/no order/i);
+    s.orders[0].status = 'CANCELLED';
+    expect(actionPrecondition(s, { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' }, 3)).toMatch(/not PAID/i);
+  });
 });
 
 describe('applyBaseEffects', () => {
