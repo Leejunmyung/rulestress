@@ -3,7 +3,15 @@
 - 날짜: 2026-09-08
 - 대상: Wanted AI Championship 2026 (마감 9/20)
 - 빌드 조건: 솔로, ~12일, Codex에 구현 다수 위임 전제
-- 상태: GPT 외부 검증 완료 (GO), 4건 수정 + decoy invariant 제거 반영
+- 상태: 외부 검증 2회 완료 (GPT: GO / Codex: Gate 1 차단 이슈 1건 + P2 5건)
+- v2 반영:
+  - R2′ 회계 오류 수정 — liability 분을 reclaimedAmount에 더하지 않음, `settledByClawback`로 idempotent
+  - transition 의미론 확정 — event별 진입 스냅샷에서 매칭, effect Ref는 실행 시점 해석
+  - FIFO 명시 — `rewards` 배열 순서, `createdAt` 제거
+  - BFS 초기 상태 invariant 검사 추가
+  - LLM-Direct 공정 비교 조건 명시
+  - 엔티티 id 결정론 생성 규칙 추가
+  - decoy invariant 제거, WAIT 제거 (v1)
 
 ---
 
@@ -75,8 +83,11 @@ type Reward = {
   grantedAmount: number;
   remainingAmount: number;
   spentAmount: number;
-  reclaimedAmount: number;
+  reclaimedAmount: number;          // 실제로 회수된 포인트만 (liability 분은 미포함)
+  settledByClawback: boolean;       // RECLAIM_REWARD_FULL 이 한 번 처리했는지 (idempotency)
 };
+// rewards 배열은 항상 생성(ISSUE_REWARD) 순서를 유지한다.
+// SPEND_REWARD / RECLAIM_REWARD 의 소비 순서 = 이 배열 순서 (FIFO). createdAt 필드 없음.
 
 type Liability = {
   id: string;
@@ -101,6 +112,16 @@ type Ledger = {
 
 이 세 개는 매 transition 후 assert. 깨지면 엔진 버그.
 
+> `reclaimedAmount`는 **실제로 회수된 포인트만** 담는다. liability로 대체 회수한 금액은
+> 여기 더하지 않는다 (§8 R2′ 참고). 그렇게 하면 보존식 `granted == remaining + spent +
+> reclaimed`가 유지되고, 미회수분은 `NET_BENEFIT_FROM_ORDER`에서 liability로만 차감된다.
+
+### 엔티티 ID 생성 (결정론)
+
+모든 엔티티 id(order, reward, liability)는 **state로부터만** 결정된다. 예: `o{orders.length+1}`,
+`r{rewards.length+1}`. 상태 외부의 전역 카운터에 의존하면 canonicalKey가 경로에 따라
+달라져 visited가 깨진다.
+
 ### Liability 의미 (명시적 가정)
 
 Liability는 단순 레코드가 아니라 **경제적으로 강제되는 채무 / 정산에서 실제 차감되는
@@ -121,10 +142,10 @@ MVP에서 쓰는 것만:
 | `ADD_CASH_PAID` | identityId, value | ledger.cashPaid += value |
 | `ADD_CASH_REFUNDED` | identityId, value | ledger.cashRefunded += value |
 | `ADD_GOODS` | identityId, value | ledger.goodsRetained += value (음수 가능, 결과는 clamp 안 함 — 음수 되면 엔진 버그) |
-| `ISSUE_REWARD` | identityId, amount, sourceOrderId | Reward 생성 (granted=remaining=amount), pointsBalance += amount |
-| `SPEND_REWARD` | identityId, amount | remainingAmount>0인 reward를 createdAt 오래된 순으로 소진: remaining -= k, spent += k, pointsBalance -= k |
-| `RECLAIM_REWARD` | sourceOrderId, limit | §8의 버그 버전. remaining만 회수 |
-| `RECLAIM_REWARD_FULL` | sourceOrderId | §8의 수정 버전. remaining 회수 + 부족분 liability |
+| `ISSUE_REWARD` | identityId, amount, sourceOrderId | Reward 생성 (granted=remaining=amount, spent=reclaimed=0, settledByClawback=false), pointsBalance += amount |
+| `SPEND_REWARD` | identityId, amount | remainingAmount>0인 reward를 **rewards 배열 순서(FIFO)**로 소진: remaining -= k, spent += k, pointsBalance -= k |
+| `RECLAIM_REWARD` | sourceOrderId, limit | §8의 버그 버전. remaining만 회수 (FIFO) |
+| `RECLAIM_REWARD_FULL` | sourceOrderId | §8의 수정 버전. remaining 회수 + 부족분 liability. **idempotent** (§8) |
 | `CREATE_LIABILITY` | identityId, amount, sourceOrderId | Liability 생성 |
 | `SET_FLAG` | identityId, key, value | identity.flags[key] = value |
 
@@ -155,14 +176,25 @@ type Ref =
   | { field: string }        // 'event.amount' | 'event.orderId' | 'event.paymentKind'
                              // | 'ledger.pointsBalance' | 'identity.flags.<key>'
   | { constant: number | string | boolean };
+
+type EffectTemplate = {
+  primitive: PrimitiveType;               // §3
+  args: Record<string, Ref>;              // 리터럴(constant) 또는 field 참조
+};
 ```
 
 **원칙:** LLM은 JavaScript를 생성하지 않는다. 미리 정의된 이 DSL만 생성한다
 (MVP에서는 사람이 폼으로 입력). DSL에 Risk 이름 없음. Risk 라벨은 결과 설명 단계에서만
 LLM이 붙인다.
 
-`EffectTemplate`는 §3 Primitive에 파라미터로 리터럴 또는 `{ field: 'event.xxx' }` 참조를
-넣을 수 있는 형태. 예: `ISSUE_REWARD(identityId={field:'event.identityId'}, amount=10000,
+**Ref 해석 시점 (중요):**
+- **condition의 Ref**: 해당 event 처리 시작 스냅샷(§6) 기준으로 평가.
+- **EffectTemplate의 Ref**: 그 effect가 **실행되기 직전** state 기준으로 평가.
+  같은 rule이라도 앞선 effect가 바꾼 값을 뒤 effect가 본다.
+  예: `RECLAIM_REWARD(limit={field:'ledger.pointsBalance'})`는 회수 실행 직전 잔액을 쓴다.
+- `event.*`는 어느 쪽이든 불변(그 event가 실어 온 값).
+
+예: `ISSUE_REWARD(identityId={field:'event.identityId'}, amount={constant:10000},
 sourceOrderId={field:'event.orderId'})`.
 
 ---
@@ -195,22 +227,26 @@ type Action =
 ```
 transition(state, action) -> { nextState, events }:
   1. precondition 검사. 실패 시 { invalid: true } 반환 (search가 스킵)
-  2. action의 base effects를 순서대로 apply  ->  S1
+  2. action의 base effects를 순서대로 apply  ->  cur
   3. action이 emit한 events 수집 (위 표의 순서)
-  4. 각 event를 emit 순서대로 처리:
-       a. matching: trigger.type == event.type 이고 conditions가 S1에서 모두 true인
-          rule을 rules 배열 순서대로 "전부 확정" (조건 평가는 전부 S1 스냅샷 기준)
-       b. apply: 확정된 rule들의 effects를 rule 순서대로 순차 apply  ->  S2, S3, ...
-          (effect 적용 후 다른 rule의 condition을 재평가하지 않는다)
+  4. 각 event E를 emit 순서대로 처리:
+       snapshot = cur                        # 이 event 처리 시작 시점 고정
+       a. matching: trigger.type == E.type 이고 conditions가 snapshot 기준으로 모두
+          true인 rule을 rules 배열 순서대로 "전부 확정"
+          (매칭 판정은 snapshot 고정 — 확정된 rule의 effect가 바꾼 값이 뒤 rule의
+           매칭 판정에 영향을 주지 않는다)
+       b. apply: 확정된 rule들의 effects를 (rule 순서 → 각 rule 안의 effect 순서)
+          대로 cur 에 순차 apply. EffectTemplate의 Ref는 실행 직전 cur 기준 (§4).
   5. 내부 불변식 assert (§2)
-  6. return { nextState, events }
+  6. return { nextState: cur, events }
 ```
 
-- **rule cascading 없음**: rule의 effect가 다시 rule을 트리거하지 않는다. 매칭은 단일
-  스냅샷에서 확정. MVP의 명시적 가정. 실제 시스템은 cascade 하기도 함 → 후속 과제.
+의미론 요약:
+- **event 내부**: 매칭은 그 event 진입 스냅샷 하나로 확정. effect는 순차 적용.
+- **event 사이**: event N+1의 스냅샷은 event N의 모든 effect가 반영된 상태.
+- **rule cascading 없음**: rule의 effect가 만들어 낸 논리적 조건 변화가 *같은 event 안에서*
+  다른 rule을 새로 매칭시키지 않는다. (effect가 새 event를 emit해 큐에 넣는 일도 없음.)
 - 랜덤 없음, wall-clock 없음, 시간 진행 없음. 동일 입력 → 동일 출력.
-- 여러 event가 있을 때: event N의 rule effect가 적용된 후 event N+1의 rule matching은
-  그 시점 state에서 평가된다 (event 간에는 순차, event 내에서는 스냅샷).
 
 ---
 
@@ -245,7 +281,12 @@ NET_BENEFIT_FROM_ORDER(o) =
   - Σ { l.amount : l.sourceOrderId == o.id }
 ```
 
-`grantedAmount - reclaimedAmount` = 아직 회수되지 않은 보상 가치 (remaining + spent).
+`grantedAmount - reclaimedAmount` = 포인트로 회수되지 않은 보상 가치 (remaining + spent).
+이 중 liability로 대체 회수된 부분을 다시 빼면 실제 누수분이 된다. 수정 규칙에서는 이 값이 0.
+
+> **한계:** 이 metric은 주문 o가 **직접** 발생시킨 보상(`sourceOrderId == o.id`)만 본다.
+> o의 보상이 다른 주문으로 옮겨 가 그 주문이 또 보상을 낳는 *파생 보상* 연쇄는 추적하지
+> 않는다. 메인 데모는 R1이 CASH 결제에만 적용돼 파생이 없다. §12 참고.
 
 ### 데모의 invariant (1개)
 
@@ -288,14 +329,15 @@ R2 clawback_on_cancel  (BUGGY):
 
 `RECLAIM_REWARD(sid, limit)` 의미 (버그):
 ```
-limitLeft = limit
-for r in rewards where r.sourceOrderId == sid (createdAt 오름차순):
+limitLeft = limit                       # limit = 실행 직전 ledger.pointsBalance (§4)
+for r in rewards where r.sourceOrderId == sid (rewards 배열 순서, FIFO):
     k = min(r.remainingAmount, limitLeft)
     r.remainingAmount  -= k
     r.reclaimedAmount  += k
     pointsBalance       -= k
     limitLeft           -= k
 # spentAmount는 절대 건드리지 않음. 부족분 liability 생성 안 함.  <- 버그
+# settledByClawback 도 세팅하지 않음.
 ```
 
 ### 규칙 — 수정 버전 (Before/After에서 교체)
@@ -306,18 +348,23 @@ R2' clawback_on_cancel  (FIXED):
   effects:    [ RECLAIM_REWARD_FULL(sourceOrderId=event.orderId) ]
 ```
 
-`RECLAIM_REWARD_FULL(sid)` 의미:
+`RECLAIM_REWARD_FULL(sid)` 의미 (idempotent):
 ```
-for r in rewards where r.sourceOrderId == sid (createdAt 오름차순):
-    unreclaimed = r.grantedAmount - r.reclaimedAmount        # remaining + spent
-    fromBalance = min(r.remainingAmount, pointsBalance)
+for r in rewards where r.sourceOrderId == sid (rewards 배열 순서, FIFO):
+    if r.settledByClawback: continue                     # 이미 처리됨 -> 재실행 무해
+
+    fromBalance = min(r.remainingAmount, pointsBalance)   # pointsBalance = 실행 직전 값
     r.remainingAmount -= fromBalance
-    r.reclaimedAmount += fromBalance
+    r.reclaimedAmount += fromBalance                      # 실제 회수한 포인트만
     pointsBalance      -= fromBalance
-    shortfall = unreclaimed - fromBalance
+
+    shortfall = (r.grantedAmount - r.reclaimedAmount)     # 아직 못 회수한 값 (= 남은 spent)
     if shortfall > 0:
-        CREATE_LIABILITY(r.identityId, shortfall, sid)
-        r.reclaimedAmount += shortfall    # liability로 회수한 것으로 간주
+        CREATE_LIABILITY(r.identityId, shortfall, sid)    # spentAmount 만큼을 채무로
+
+    r.settledByClawback = true
+# reclaimedAmount 에 liability 분을 더하지 않음 -> 보존식 granted == remaining+spent+reclaimed 유지.
+# 미회수분은 NET_BENEFIT_FROM_ORDER 에서 liability 로만 차감된다.
 ```
 
 ### Bounds
@@ -356,12 +403,12 @@ A3: CANCEL_ORDER(id1, o1)
     pre: o1 PAID, CASH  ok
     base: SET_ORDER_STATUS(o1, CANCELLED); cashRefunded 50000; ADD_GOODS -50000
     emit ORDER_CANCELLED{o1, id1}
-    R2 매칭: RECLAIM_REWARD(src:o1, limit:0)
+    R2 매칭: RECLAIM_REWARD(src:o1, limit:0)   (limit = 실행 직전 pointsBalance = 0)
         r1.remainingAmount = 0 -> k = min(0, 0) = 0 -> 변화 없음
-        r1 spent 10000 그대로. liability 없음.
+        r1 spent 10000 그대로. liability 없음. settledByClawback 미세팅.
 State3  cashPaid 50000   refunded 50000   goods 10000   points 0
         orders[o1:CANCELLED, o2:PAID]
-        rewards[r1: granted 10000, remaining 0, spent 10000, reclaimed 0]
+        rewards[r1: granted 10000, remaining 0, spent 10000, reclaimed 0, settled false]
         liabilities[]
 
 ── Invariant 검사 ──
@@ -383,24 +430,35 @@ no_benefit_after_cancel, forall order, o1 (status==CANCELLED):
 
 ```
 A3에서 R2' 매칭: RECLAIM_REWARD_FULL(src:o1)
-  r1: unreclaimed = 10000 - 0 = 10000
-      fromBalance = min(remaining 0, points 0) = 0
-      shortfall = 10000 - 0 = 10000  > 0
-      -> CREATE_LIABILITY(id1, 10000, o1);  r1.reclaimed = 10000
-State3' liabilities[ {10000, src:o1} ]   r1 reclaimed 10000
+  r1: settledByClawback false -> 처리
+      fromBalance = min(remaining 0, points 0) = 0   (변화 없음)
+      shortfall = granted 10000 - reclaimed 0 = 10000  > 0
+      -> CREATE_LIABILITY(id1, 10000, o1)
+      r1.settledByClawback = true
+State3' rewards[r1: granted 10000, remaining 0, spent 10000, reclaimed 0, settled true]
+        liabilities[ {amount 10000, src:o1} ]
 
-NET_BENEFIT_FROM_ORDER(o1) = (10000 - 10000) - 10000 = -10000  <= 0   ✓
-IDENTITY_NET_EXTRACTED_VALUE = 10000 + 50000 + 0 - 50000 - 10000 = 0   ✓
+보존식: granted 10000 == remaining 0 + spent 10000 + reclaimed 0   ✓
+NET_BENEFIT_FROM_ORDER(o1) = (granted 10000 - reclaimed 0) - liability 10000 = 0  <= 0   ✓
+IDENTITY_NET_EXTRACTED_VALUE = goods 10000 + refunded 50000 + points 0
+                             - cashPaid 50000 - liab 10000 = 0   ✓
+
+FULL 재실행(벤치마크에서 clawback 규칙 2개인 경우): r1.settledByClawback == true
+  -> skip, liability 중복 생성 없음.
 
 BFS 결과: "No invariant violation found within explored state space
           (N states, depth <= 4)"
 ```
 
-### 최단 반례 확인 (외부 검증 완료)
+### 최단 반례 확인 (외부 검증 2회 완료)
 
 1~2 action으로는 `no_benefit_after_cancel`를 깰 수 없다.
 - `PURCHASE(50000) -> CANCEL(o1)`: r1 remaining 10000 -> 전액 reclaim -> `NET_BENEFIT_FROM_ORDER(o1) = 0`. 위반 없음.
 - 반드시 reward를 `spent` 상태로 먼저 만들어야 하므로 **최단 반례 = 정확히 3 action.**
+- 지정된 bounds/파라미터 후보에서 depth 3 반례는 (ID 명명 차이 제외) **유일**하다.
+  독립 열거로 확인: 초기 상태 포함 114개 경로 접두사, 서로 다른 상태 71개, depth-3 반례 1개.
+- depth 4에 다른 반례(예: `PURCHASE 50000` 2회 후 소비·취소)가 있을 수 있으나 BFS는
+  최단부터 반환하므로 데모에 영향 없다.
 
 BFS에 넘기는 것은 `initialState / actionSpace / RulesSpec / InvariantSpec / bounds`뿐.
 expected sequence는 코드 어디에도 없다.
@@ -411,6 +469,10 @@ expected sequence는 코드 어디에도 없다.
 
 ```
 bfs(rulesSpec, invariantSpec, initialState, bounds) -> SearchResult:
+  v0 = evaluateInvariants(initialState, invariantSpec)     # 초기 상태도 검사
+  if v0 not empty:
+    return { trace: { steps: [], violations: v0 }, explored: 0 }
+
   queue   = [ initialState ]
   visited = { canonicalKey(initialState) }
   parent  = {}                          # canonicalKey -> { prevKey, action }
@@ -438,7 +500,9 @@ bfs(rulesSpec, invariantSpec, initialState, bounds) -> SearchResult:
 
 - **canonicalKey (MVP 최소 버전):** 전체 state를 결정론적으로 직렬화. 엔티티 id 그대로,
   배열은 생성 순서 유지, 객체 키 정렬. identity 1개라 대칭 축소 불필요.
-  구현: 재귀적으로 키 정렬한 뒤 `JSON.stringify`.
+  구현: 재귀적으로 키 정렬한 뒤 `JSON.stringify`. (엔티티 id가 state로부터 결정되므로 §2,
+  같은 논리 상태는 같은 key가 된다.)
+- BFS는 같은 상태에 항상 최단 깊이로 먼저 도달하므로 key에 depth를 넣지 않는다.
 - **validActions:** 각 action 타입 × 시나리오가 준 파라미터 후보. `CANCEL_ORDER`는 현재
   PAID + CASH 주문마다 하나씩 생성.
 - **BFS라서 첫 발견 반례가 최단.** 발견 즉시 종료 (all-counterexamples 모드는 스코프 밖).
@@ -449,14 +513,26 @@ bfs(rulesSpec, invariantSpec, initialState, bounds) -> SearchResult:
 
 ## 10. Benchmark 비교 (LLM-Direct baseline)
 
-동일 RulesSpec + InvariantSpec를 자연어로 변환해 프론티어 LLM에 전달:
+**공정 비교 원칙:** LLM과 BFS는 **완전히 동일한 탐색 조건**을 받는다.
+- 동일 initialState
+- 동일 action 목록 + 각 precondition (POINTS 주문 취소 불가 등 명시)
+- 동일 파라미터 후보 집합 ({50000, 49999} / {10000})
+- 동일 bounds (maxDepth, maxOrders)
+- 동일 실행 규칙 (FIFO 소비, snapshot 매칭 의미론)
 
-> "이 프로모션에서 기획 의도를 위반하는 행동 순서를 찾아라. 아래 action 타입만 사용해
-> 시퀀스로 답하라: PURCHASE(amount), PURCHASE_WITH_POINTS(amount), CANCEL_ORDER(orderId)."
+LLM 프롬프트에 위를 전부 넣고:
 
-LLM이 낸 시퀀스를 **RuleStress simulator에 그대로 투입**해서:
-- 실제 실행 가능한가? (모든 precondition 통과)
+> "아래 초기 상태 / 규칙 / invariant / 허용 action(+precondition) / 파라미터 후보 / 최대
+> 길이가 주어진다. invariant를 위반하는 action 시퀀스를 찾아라. 파라미터는 후보 집합의
+> 값만 사용하라."
+
+LLM이 낸 시퀀스를 **RuleStress simulator에 그대로 투입**하되, replay도 동일 precondition/
+파라미터 제약을 적용해서:
+- 실제 실행 가능한가? (모든 precondition 통과, 파라미터가 후보 집합 내)
 - 정말 invariant를 위반하는가?
+
+후보 밖 파라미터(예: `PURCHASE_WITH_POINTS(5000)`)를 쓴 시퀀스는 "실행검증 실패"로
+집계한다 — BFS와 다른 입력 공간에서 나온 답이기 때문.
 
 3개 시나리오에 대해 표 (숫자는 실제 측정 후에만 채운다):
 
@@ -500,7 +576,7 @@ app/
 
 ## 12. 명시적 한계 / 가정
 
-1. rule cascading 없음 (1-level trigger, 매칭은 단일 스냅샷)
+1. rule cascading 없음 (같은 event 안에서 effect가 다른 rule을 새로 매칭시키지 않음, effect가 event를 emit하지 않음)
 2. 단일 identity. multi-account / self-referral은 스코프 밖
 3. 파라미터 후보는 시나리오별 수동 지정
 4. canonicalization은 완전 직렬화 (대칭 축소 없음). bound가 작아 문제없음
@@ -508,7 +584,12 @@ app/
 6. 경제 계산은 전부 simulator가 수행. LLM은 숫자를 만지지 않는다
 7. POINTS 결제 주문은 취소 불가 (모델링 단순화)
 8. Liability는 경제적으로 강제되는 채무라고 가정 (§2)
-9. 시간 진행 없음 (currentTime 항상 0). WAIT/vesting은 benchmark 단계에서 추가
+9. 시간 진행 없음 (currentTime 항상 0). WAIT/vesting은 이 MVP·벤치마크 전 범위에서 미지원. 시간 기반 시나리오는 후속.
+10. reward 소비 순서는 `rewards` 배열 순서(FIFO). 동률 tiebreak 없음 (전역 순서 하나뿐)
+11. `NET_BENEFIT_FROM_ORDER`는 취소 주문의 **직접** 보상만 검증한다. 주문 간 파생 보상의 인과 연쇄는 추적하지 않는다 (§7). 벤치마크 시나리오는 이 범위 안에서 설계
+12. 모든 벤치마크 initialState는 invariant를 만족해야 한다 (BFS는 초기 상태도 검사하지만, fixture 설계 계약으로 명시)
+13. `RECLAIM_REWARD_FULL`은 `settledByClawback`로 idempotent. 같은 cancel event에 clawback 규칙이 여러 개여도 liability 중복 생성 안 함
+14. 엔티티 id는 state에서 결정론적으로 생성 (전역 카운터 금지, §2)
 
 ---
 
