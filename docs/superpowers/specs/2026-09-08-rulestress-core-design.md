@@ -3,15 +3,19 @@
 - 날짜: 2026-09-08
 - 대상: Wanted AI Championship 2026 (마감 9/20)
 - 빌드 조건: 솔로, ~12일, Codex에 구현 다수 위임 전제
-- 상태: 외부 검증 2회 완료 (GPT: GO / Codex: Gate 1 차단 이슈 1건 + P2 5건)
-- v2 반영:
+- 상태: 외부 검증 3회 완료 (GPT: GO / Codex v1: Gate 1 차단 1건+P2 5건 / Codex v2: Gate 1 해결 확인, P2 4건)
+- v3 반영 (Codex v2 피드백):
+  - `SearchResult` 단일 반환 형태 확정 (`{ trace, violations, explored }`)
+  - fixture 사전 검증에 내부 불변식(§2)도 포함, `assertInternalInvariants`
+  - fixture 엔티티 id 연속 규칙 계약 (`o2` 단독 금지)
+  - LLM replay에 `sequence.length <= maxDepth` 검사 + "동일 실행 규칙" 범위 확대
+  - 금액은 비음수 정수 입력 제약 명시
+- v2 반영 (Codex v1 피드백):
   - R2′ 회계 오류 수정 — liability 분을 reclaimedAmount에 더하지 않음, `settledByClawback`로 idempotent
   - transition 의미론 확정 — event별 진입 스냅샷에서 매칭, effect Ref는 실행 시점 해석
   - FIFO 명시 — `rewards` 배열 순서, `createdAt` 제거
-  - BFS 초기 상태 invariant 검사 추가
-  - LLM-Direct 공정 비교 조건 명시
-  - 엔티티 id 결정론 생성 규칙 추가
-  - decoy invariant 제거, WAIT 제거 (v1)
+  - BFS 초기 상태 invariant 검사 추가 / 엔티티 id 결정론 생성 규칙
+- v1: decoy invariant 제거, WAIT 제거
 
 ---
 
@@ -119,8 +123,14 @@ type Ledger = {
 ### 엔티티 ID 생성 (결정론)
 
 모든 엔티티 id(order, reward, liability)는 **state로부터만** 결정된다. 예: `o{orders.length+1}`,
-`r{rewards.length+1}`. 상태 외부의 전역 카운터에 의존하면 canonicalKey가 경로에 따라
+`r{rewards.length+1}`, `l{liabilities.length+1}`. 취소돼도 배열에서 제거하지 않으므로
+length는 단조 증가한다. 상태 외부의 전역 카운터에 의존하면 canonicalKey가 경로에 따라
 달라져 visited가 깨진다.
+
+**fixture 계약:** 초기 상태에 이미 엔티티가 있으면, 그 id들은 반드시 `o1..oN` / `r1..rN`
+/ `l1..lN` 연속 규칙을 따라야 한다 (예: `orders`에 `o1, o2`만, `o2` 단독 금지). 로더가
+검증한다. 이래야 이후 `length+1` 생성이 기존 id와 충돌하지 않는다. 메인 데모는 빈 초기
+상태라 무관.
 
 ### Liability 의미 (명시적 가정)
 
@@ -467,14 +477,39 @@ expected sequence는 코드 어디에도 없다.
 
 ## 9. Search
 
+### 반환 타입 (단일 형태)
+
+```ts
+type SearchResult = {
+  trace: CounterexampleTrace | null;   // null = bound 안에서 위반 없음
+  violations: Violation[];             // trace != null 일 때만 non-empty
+  explored: number;                    // visited 에 등록된 서로 다른 상태 수 (초기 상태 포함)
+};
+
+type CounterexampleTrace = {
+  steps: TraceStep[];                  // 초기 상태가 이미 위반이면 []
+  finalState: SimulationState;         // 위반이 관측된 상태
+};
+
+type TraceStep = { action: Action; stateBefore: SimulationState; stateAfter: SimulationState };
+```
+
+모든 분기가 `{ trace, violations, explored }` 세 필드를 동일 위치에 채운다.
+`violations`는 항상 최상위. 소비자(Worker/UI)는 분기를 구분할 필요가 없다.
+
+### 알고리즘
+
 ```
 bfs(rulesSpec, invariantSpec, initialState, bounds) -> SearchResult:
+  assertInternalInvariants(initialState)                   # §2, fixture 사전 검증
+  visited = { canonicalKey(initialState) }
+
   v0 = evaluateInvariants(initialState, invariantSpec)     # 초기 상태도 검사
   if v0 not empty:
-    return { trace: { steps: [], violations: v0 }, explored: 0 }
+    return { trace: { steps: [], finalState: initialState },
+             violations: v0, explored: visited.size }
 
   queue   = [ initialState ]
-  visited = { canonicalKey(initialState) }
   parent  = {}                          # canonicalKey -> { prevKey, action }
   depthOf = { canonicalKey(initialState): 0 }
 
@@ -495,13 +530,15 @@ bfs(rulesSpec, invariantSpec, initialState, bounds) -> SearchResult:
       depthOf[k] = depthOf[canonicalKey(s)] + 1
       queue.enqueue(nextState)
 
-  return { trace: null, explored: visited.size }
+  return { trace: null, violations: [], explored: visited.size }
 ```
 
 - **canonicalKey (MVP 최소 버전):** 전체 state를 결정론적으로 직렬화. 엔티티 id 그대로,
   배열은 생성 순서 유지, 객체 키 정렬. identity 1개라 대칭 축소 불필요.
-  구현: 재귀적으로 키 정렬한 뒤 `JSON.stringify`. (엔티티 id가 state로부터 결정되므로 §2,
-  같은 논리 상태는 같은 key가 된다.)
+  구현: 재귀적으로 키 정렬한 뒤 `JSON.stringify`.
+  - **완전히 같은 state → 같은 key** (오병합 없음). 대칭 축소를 안 하므로 id만 다르고
+    의미상 대칭인 두 state는 별개 key를 갖는다 — 탐색량 문제이지 정확도 문제는 아니다.
+  - 엔티티 id가 state에서 결정론적으로 생성되므로(§2) 같은 경로 → 같은 key가 보장된다.
 - BFS는 같은 상태에 항상 최단 깊이로 먼저 도달하므로 key에 depth를 넣지 않는다.
 - **validActions:** 각 action 타입 × 시나리오가 준 파라미터 후보. `CANCEL_ORDER`는 현재
   PAID + CASH 주문마다 하나씩 생성.
@@ -513,26 +550,31 @@ bfs(rulesSpec, invariantSpec, initialState, bounds) -> SearchResult:
 
 ## 10. Benchmark 비교 (LLM-Direct baseline)
 
-**공정 비교 원칙:** LLM과 BFS는 **완전히 동일한 탐색 조건**을 받는다.
+**공정 비교 원칙:** LLM과 BFS는 **완전히 동일한 탐색 조건**을 받는다. 프롬프트에 아래를
+빠짐없이 명시한다:
 - 동일 initialState
-- 동일 action 목록 + 각 precondition (POINTS 주문 취소 불가 등 명시)
+- 동일 action 목록 + 각 base effects + precondition (POINTS 주문 취소 불가 등)
+- action의 event 발생 순서
+- primitive 의미 (§3) + EffectTemplate Ref 해석 시점 (§4)
+- FIFO 소비 규칙, event별 스냅샷 매칭 의미론 (§6)
+- 엔티티 id 생성 규칙 (§2)
 - 동일 파라미터 후보 집합 ({50000, 49999} / {10000})
-- 동일 bounds (maxDepth, maxOrders)
-- 동일 실행 규칙 (FIFO 소비, snapshot 매칭 의미론)
+- 동일 bounds: `maxDepth`, `maxOrders`
 
-LLM 프롬프트에 위를 전부 넣고:
+프롬프트:
 
-> "아래 초기 상태 / 규칙 / invariant / 허용 action(+precondition) / 파라미터 후보 / 최대
-> 길이가 주어진다. invariant를 위반하는 action 시퀀스를 찾아라. 파라미터는 후보 집합의
-> 값만 사용하라."
+> "아래 초기 상태 / 규칙 / invariant / 허용 action(+base effects+precondition) / 실행 규칙
+> / 파라미터 후보 / 최대 시퀀스 길이(maxDepth)가 주어진다. invariant를 위반하는 action
+> 시퀀스를 찾아라. 파라미터는 후보 집합 값만, 길이는 maxDepth 이하로."
 
-LLM이 낸 시퀀스를 **RuleStress simulator에 그대로 투입**하되, replay도 동일 precondition/
-파라미터 제약을 적용해서:
-- 실제 실행 가능한가? (모든 precondition 통과, 파라미터가 후보 집합 내)
-- 정말 invariant를 위반하는가?
+LLM이 낸 시퀀스를 **RuleStress simulator에 그대로 투입**하되, replay 검증 시 아래를 모두 확인:
+- `sequence.length <= maxDepth`
+- 각 파라미터가 후보 집합 내
+- 각 action의 precondition 통과 (`maxOrders` 포함)
+- 최종/중간 상태에서 실제 invariant 위반 발생
 
-후보 밖 파라미터(예: `PURCHASE_WITH_POINTS(5000)`)를 쓴 시퀀스는 "실행검증 실패"로
-집계한다 — BFS와 다른 입력 공간에서 나온 답이기 때문.
+하나라도 불충족이면 **"실행검증 실패"**로 집계한다 (탐색 경계 밖 / 다른 입력공간의 답).
+예: `PURCHASE_WITH_POINTS(5000)`(후보 밖), 길이 5 시퀀스(maxDepth 4 초과).
 
 3개 시나리오에 대해 표 (숫자는 실제 측정 후에만 채운다):
 
@@ -587,9 +629,11 @@ app/
 9. 시간 진행 없음 (currentTime 항상 0). WAIT/vesting은 이 MVP·벤치마크 전 범위에서 미지원. 시간 기반 시나리오는 후속.
 10. reward 소비 순서는 `rewards` 배열 순서(FIFO). 동률 tiebreak 없음 (전역 순서 하나뿐)
 11. `NET_BENEFIT_FROM_ORDER`는 취소 주문의 **직접** 보상만 검증한다. 주문 간 파생 보상의 인과 연쇄는 추적하지 않는다 (§7). 벤치마크 시나리오는 이 범위 안에서 설계
-12. 모든 벤치마크 initialState는 invariant를 만족해야 한다 (BFS는 초기 상태도 검사하지만, fixture 설계 계약으로 명시)
+12. 모든 fixture initialState는 **업무 invariant + 내부 불변식(§2)** 을 둘 다 만족해야 한다. `bfs()` 시작 시 `assertInternalInvariants(initialState)` 로 검증 (§9). maxDepth=0 이라 transition이 안 돌아도 시작 전 검증됨
 13. `RECLAIM_REWARD_FULL`은 `settledByClawback`로 idempotent. 같은 cancel event에 clawback 규칙이 여러 개여도 liability 중복 생성 안 함
-14. 엔티티 id는 state에서 결정론적으로 생성 (전역 카운터 금지, §2)
+14. 엔티티 id는 state에서 결정론적으로 생성 (전역 카운터 금지, §2). fixture의 기존 id도 `o1..oN` / `r1..rN` / `l1..lN` 연속 규칙을 따라야 하며 로더가 검증
+15. 모든 금액(order.amount, reward amount, ledger 값, 파라미터 후보)은 **비음수 정수**. 음수/소수 입력은 로더가 거부
+16. `SearchResult` 는 분기와 무관하게 `{ trace, violations, explored }` 단일 형태. `explored` = visited 등록 상태 수 (초기 상태 포함) (§9)
 
 ---
 
