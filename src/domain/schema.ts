@@ -2,7 +2,10 @@ import { z } from 'zod';
 import type { Scenario } from './types.js';
 import { assertInternalInvariants } from './invariants.js';
 
-const nonNegInt = z.number().int().nonnegative();
+const nonNegInt = z
+  .number()
+  .int({ message: 'must be a non-negative integer' })
+  .nonnegative({ message: 'must be a non-negative integer' });
 
 const ledgerSchema = z.object({
   cashPaid: nonNegInt,
@@ -109,11 +112,10 @@ function assertSequentialIds(prefix: string, ids: string[]): void {
 export function loadScenario(raw: unknown): Scenario {
   const parsed = scenarioSchema.safeParse(raw);
   if (!parsed.success) {
-    // surface non-negative-int failures with the phrase the tests look for
     const msg = parsed.error.issues
       .map((i) => `${i.path.join('.')}: ${i.message}`)
       .join('; ');
-    if (/nonnegative|greater than or equal to 0|expected int/i.test(msg)) {
+    if (/non-negative integer/i.test(msg)) {
       throw new Error(`non-negative integer required — ${msg}`);
     }
     throw new Error(`invalid scenario — ${msg}`);

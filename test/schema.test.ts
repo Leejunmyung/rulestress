@@ -41,4 +41,18 @@ describe('loadScenario', () => {
     bad.initialState.ledger.id1.pointsBalance = 5;
     expect(() => loadScenario(bad)).toThrow(/internal invariant/i);
   });
+
+  it('accepts and returns a valid scenario with multiple orders', () => {
+    const withOrders = structuredClone(valid);
+    withOrders.initialState.orders = [
+      { id: 'o1', identityId: 'id1', amount: 100, status: 'PAID', paymentKind: 'CASH' },
+      { id: 'o2', identityId: 'id1', amount: 200, status: 'PAID', paymentKind: 'CASH' },
+    ] as any;
+    withOrders.initialState.ledger.id1.cashPaid = 300;
+    withOrders.initialState.ledger.id1.goodsRetained = 300;
+
+    const result = loadScenario(withOrders);
+    expect(result).toBeDefined();
+    expect(result.initialState.orders[1].id).toBe('o2');
+  });
 });
