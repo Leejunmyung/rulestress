@@ -108,5 +108,9 @@ export function applyEffect(state: SimulationState, effect: Effect): SimulationS
       i.flags[effect.key] = effect.value;
       return s;
     }
+    default: {
+      const _never: never = effect;
+      throw new Error(`applyEffect: unknown primitive ${(effect as { primitive: string }).primitive}`);
+    }
   }
 }

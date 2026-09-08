@@ -33,13 +33,27 @@ describe('applyEffect', () => {
     assertInternalInvariants(s);
   });
 
-  it('RECLAIM_REWARD (buggy) only pulls from remaining, leaves spent', () => {
+  it('RECLAIM_REWARD exercises the loop: partial remaining gets reclaimed', () => {
     let s = blank();
     s = applyEffect(s, { primitive: 'ISSUE_REWARD', identityId: 'id1', amount: 10000, sourceOrderId: 'o1' });
-    s = applyEffect(s, { primitive: 'SPEND_REWARD', identityId: 'id1', amount: 10000 });
-    s = applyEffect(s, { primitive: 'RECLAIM_REWARD', sourceOrderId: 'o1', limit: 0 });
-    expect(s.rewards[0]).toMatchObject({ remainingAmount: 0, spentAmount: 10000, reclaimedAmount: 0, settledByClawback: false });
+    s = applyEffect(s, { primitive: 'SPEND_REWARD', identityId: 'id1', amount: 6000 });
+    expect(s.ledger.id1.pointsBalance).toBe(4000);
+    s = applyEffect(s, { primitive: 'RECLAIM_REWARD', sourceOrderId: 'o1', limit: 10000 });
+    expect(s.rewards[0]).toMatchObject({ remainingAmount: 0, spentAmount: 6000, reclaimedAmount: 4000, settledByClawback: false });
+    expect(s.ledger.id1.pointsBalance).toBe(0);
     expect(s.liabilities).toHaveLength(0);
+    assertInternalInvariants(s);
+  });
+
+  it('SPEND_REWARD with multiple rewards follows FIFO', () => {
+    let s = blank();
+    s = applyEffect(s, { primitive: 'ISSUE_REWARD', identityId: 'id1', amount: 10000, sourceOrderId: 'o1' });
+    s = applyEffect(s, { primitive: 'ISSUE_REWARD', identityId: 'id1', amount: 10000, sourceOrderId: 'o2' });
+    s = applyEffect(s, { primitive: 'SPEND_REWARD', identityId: 'id1', amount: 12000 });
+    expect(s.rewards[0]).toMatchObject({ remainingAmount: 0, spentAmount: 10000 });
+    expect(s.rewards[1]).toMatchObject({ remainingAmount: 8000, spentAmount: 2000 });
+    expect(s.ledger.id1.pointsBalance).toBe(8000);
+    assertInternalInvariants(s);
   });
 
   it('RECLAIM_REWARD_FULL creates a liability for the spent shortfall and is idempotent', () => {
