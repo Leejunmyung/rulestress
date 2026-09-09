@@ -6,6 +6,7 @@ import { getPreset } from '../../src/ui/lib/preset';
 import { runSearch } from '../../src/ui/lib/worker-client';
 import { RuleList } from '../../src/ui/components/RuleList';
 import { TraceView } from '../../src/ui/components/TraceView';
+import { BeforeAfterPanel } from '../../src/ui/components/BeforeAfterPanel';
 
 type Phase =
   | { kind: 'idle' }
@@ -17,16 +18,35 @@ export default function SimulatePage() {
   const preset = useMemo(() => getPreset(), []);
   const [clawback, setClawback] = useState<'buggy' | 'fixed'>('buggy');
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  const [afterResult, setAfterResult] = useState<SearchResult | null>(null);
+  const [rerun, setRerun] = useState<{ running: boolean; error: string | null }>({
+    running: false,
+    error: null,
+  });
 
   const activeRules = clawback === 'buggy' ? preset.buggyRules : preset.fixedRules;
+  const busy = phase.kind === 'running' || rerun.running;
 
   async function run() {
     setPhase({ kind: 'running' });
+    setAfterResult(null);
+    setRerun({ running: false, error: null });
     try {
       const result = await runSearch(preset.scenario, activeRules);
       setPhase({ kind: 'done', result });
     } catch (e) {
-      setPhase({ kind: 'error', message: (e as Error).message });
+      setPhase({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function rerunWithFix() {
+    setRerun({ running: true, error: null });
+    try {
+      const result = await runSearch(preset.scenario, preset.fixedRules);
+      setAfterResult(result);
+      setRerun({ running: false, error: null });
+    } catch (e) {
+      setRerun({ running: false, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -44,8 +64,11 @@ export default function SimulatePage() {
             onClick={() => {
               setClawback(clawback === 'buggy' ? 'fixed' : 'buggy');
               setPhase({ kind: 'idle' });
+              setAfterResult(null);
+              setRerun({ running: false, error: null });
             }}
-            className="rounded border border-neutral-700 px-3 py-1 text-sm"
+            disabled={busy}
+            className="rounded border border-neutral-700 px-3 py-1 text-sm disabled:opacity-50"
           >
             {clawback === 'buggy' ? 'RECLAIM_REWARD (원본)' : 'RECLAIM_REWARD_FULL (수정)'}
           </button>
@@ -57,7 +80,7 @@ export default function SimulatePage() {
 
       <button
         onClick={run}
-        disabled={phase.kind === 'running'}
+        disabled={busy}
         className="mt-8 rounded bg-emerald-500 px-4 py-2 font-medium text-neutral-950 disabled:opacity-50"
       >
         {phase.kind === 'running' ? '탐색 중…' : 'Run'}
@@ -66,6 +89,23 @@ export default function SimulatePage() {
       <section className="mt-8" data-testid="result">
         {phase.kind === 'error' && <p className="text-red-400">에러: {phase.message}</p>}
         {phase.kind === 'done' && <TraceView result={phase.result} />}
+        {phase.kind === 'done' && phase.result.trace && (
+          <>
+            {rerun.error && <p className="mt-4 text-sm text-red-400">Re-run 에러: {rerun.error}</p>}
+            {afterResult === null && (
+              <button
+                onClick={rerunWithFix}
+                disabled={rerun.running}
+                className="mt-6 rounded border border-emerald-700 px-4 py-2 text-sm font-medium text-emerald-300 disabled:opacity-50"
+              >
+                {rerun.running ? '탐색 중…' : 'Re-run with fix'}
+              </button>
+            )}
+            {afterResult !== null && (
+              <BeforeAfterPanel before={phase.result} after={afterResult} />
+            )}
+          </>
+        )}
       </section>
     </main>
   );
