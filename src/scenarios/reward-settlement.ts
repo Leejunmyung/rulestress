@@ -1,6 +1,6 @@
 import type { RulesSpec, Scenario } from '../domain/types.js';
 
-const purchaseReward = {
+export const purchaseReward = {
   id: 'purchase_reward',
   trigger: { type: 'ORDER_PAID' as const },
   conditions: [

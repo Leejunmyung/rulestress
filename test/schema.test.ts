@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadScenario } from '../src/domain/schema.js';
+import { loadScenario, loadRules } from '../src/domain/schema.js';
 
 const valid = {
   name: 'x',
@@ -54,5 +54,103 @@ describe('loadScenario', () => {
     const result = loadScenario(withOrders);
     expect(result).toBeDefined();
     expect(result.initialState.orders[1].id).toBe('o2');
+  });
+});
+
+describe('loadScenario — effect validation', () => {
+  const base = () => structuredClone(valid);
+
+  it('rejects an unknown primitive', () => {
+    const bad = base();
+    bad.rules.rules = [
+      {
+        id: 'r',
+        trigger: { type: 'ORDER_PAID' },
+        conditions: [],
+        effects: [{ primitive: 'NOT_A_PRIMITIVE', args: {} }],
+      },
+    ] as any;
+    expect(() => loadScenario(bad)).toThrow(/NOT_A_PRIMITIVE|invalid enum/i);
+  });
+
+  it('rejects an effect missing a required arg', () => {
+    const bad = base();
+    bad.rules.rules = [
+      {
+        id: 'r',
+        trigger: { type: 'ORDER_PAID' },
+        conditions: [],
+        effects: [{ primitive: 'ISSUE_REWARD', args: { identityId: { field: 'event.identityId' } } }],
+      },
+    ] as any;
+    expect(() => loadScenario(bad)).toThrow(/ISSUE_REWARD.*(missing|required).*(amount|sourceOrderId)/i);
+  });
+
+  it('accepts a well-formed effect', () => {
+    const ok = base();
+    ok.rules.rules = [
+      {
+        id: 'r',
+        trigger: { type: 'ORDER_PAID' },
+        conditions: [],
+        effects: [
+          {
+            primitive: 'ISSUE_REWARD',
+            args: {
+              identityId: { field: 'event.identityId' },
+              amount: { constant: 10000 },
+              sourceOrderId: { field: 'event.orderId' },
+            },
+          },
+        ],
+      },
+    ] as any;
+    expect(() => loadScenario(ok)).not.toThrow();
+  });
+});
+
+describe('loadRules', () => {
+  const validRule = {
+    id: 'r',
+    trigger: { type: 'ORDER_PAID' },
+    conditions: [],
+    effects: [
+      {
+        primitive: 'ISSUE_REWARD',
+        args: {
+          identityId: { field: 'event.identityId' },
+          amount: { constant: 10000 },
+          sourceOrderId: { field: 'event.orderId' },
+        },
+      },
+    ],
+  };
+
+  it('accepts a valid rule set', () => {
+    expect(() => loadRules({ rules: [validRule] })).not.toThrow();
+    expect(loadRules({ rules: [] })).toEqual({ rules: [] });
+  });
+
+  it('throws on an unknown primitive', () => {
+    expect(() =>
+      loadRules({
+        rules: [{ id: 'r', trigger: { type: 'ORDER_PAID' }, conditions: [], effects: [{ primitive: 'NOT_A_PRIMITIVE', args: {} }] }],
+      }),
+    ).toThrow(/invalid rules|NOT_A_PRIMITIVE|invalid enum/i);
+  });
+
+  it('throws on an effect missing a required arg', () => {
+    expect(() =>
+      loadRules({
+        rules: [
+          {
+            id: 'r',
+            trigger: { type: 'ORDER_PAID' },
+            conditions: [],
+            effects: [{ primitive: 'ISSUE_REWARD', args: { identityId: { field: 'event.identityId' } } }],
+          },
+        ],
+      }),
+    ).toThrow(/ISSUE_REWARD.*missing required arg/i);
   });
 });
