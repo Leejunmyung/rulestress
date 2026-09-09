@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadScenario } from '../src/domain/schema.js';
+import { loadScenario, loadRules } from '../src/domain/schema.js';
 
 const valid = {
   name: 'x',
@@ -106,5 +106,51 @@ describe('loadScenario — effect validation', () => {
       },
     ] as any;
     expect(() => loadScenario(ok)).not.toThrow();
+  });
+});
+
+describe('loadRules', () => {
+  const validRule = {
+    id: 'r',
+    trigger: { type: 'ORDER_PAID' },
+    conditions: [],
+    effects: [
+      {
+        primitive: 'ISSUE_REWARD',
+        args: {
+          identityId: { field: 'event.identityId' },
+          amount: { constant: 10000 },
+          sourceOrderId: { field: 'event.orderId' },
+        },
+      },
+    ],
+  };
+
+  it('accepts a valid rule set', () => {
+    expect(() => loadRules({ rules: [validRule] })).not.toThrow();
+    expect(loadRules({ rules: [] })).toEqual({ rules: [] });
+  });
+
+  it('throws on an unknown primitive', () => {
+    expect(() =>
+      loadRules({
+        rules: [{ id: 'r', trigger: { type: 'ORDER_PAID' }, conditions: [], effects: [{ primitive: 'NOT_A_PRIMITIVE', args: {} }] }],
+      }),
+    ).toThrow(/invalid rules|NOT_A_PRIMITIVE|invalid enum/i);
+  });
+
+  it('throws on an effect missing a required arg', () => {
+    expect(() =>
+      loadRules({
+        rules: [
+          {
+            id: 'r',
+            trigger: { type: 'ORDER_PAID' },
+            conditions: [],
+            effects: [{ primitive: 'ISSUE_REWARD', args: { identityId: { field: 'event.identityId' } } }],
+          },
+        ],
+      }),
+    ).toThrow(/ISSUE_REWARD.*missing required arg/i);
   });
 });

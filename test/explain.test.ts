@@ -19,10 +19,25 @@ describe('explain prompt', () => {
 
   it('redacts currency figures the model might restate', () => {
     const out = parseExplain(
-      'ROOT_CAUSE: 취소 후에도 ₩10,000 상당의 상품과 10,000원이 남는다.\nRISK_LABEL: X',
+      'ROOT_CAUSE: 취소 후에도 ₩10,000 상당의 상품과 10,000원이 남고 10,000P가 남으며 포인트 50000, 그리고 50000 상당이 남는다.\nRISK_LABEL: X',
     );
     expect(out.rootCause).not.toMatch(/₩|원/);
+    expect(out.rootCause).not.toMatch(/\d/);
+    expect(out.rootCause).not.toMatch(/10,000P|포인트 50000|50000 상당/);
     expect(out.rootCause).toContain('(금액)');
+  });
+
+  it('leaves entity id references (o1, r1, l1) untouched', () => {
+    const out = parseExplain(
+      'ROOT_CAUSE: o1 주문을 취소하면 r1 리워드\nRISK_LABEL: X',
+    );
+    expect(out.rootCause).toBe('o1 주문을 취소하면 r1 리워드');
+  });
+
+  it('falls back to a fixed string (not raw text) when ROOT_CAUSE is absent', () => {
+    const out = parseExplain('the model rambled without the expected structure at all');
+    expect(out.rootCause).toBe('설명을 파싱하지 못했습니다.');
+    expect(out.rootCause).not.toContain('rambled');
   });
 
   it('parses a two-line response', () => {

@@ -34,14 +34,21 @@ export function buildExplainPrompt(trace: CounterexampleTrace, violations: Viola
  *  currency-looking token the model might restate, so the card never shows an
  *  unverified number next to the simulator's verified one. */
 function redactFigures(text: string): string {
-  return text.replace(/₩\s?[\d,]+|\b[\d,]{2,}\s?원/g, '(금액)');
+  // Require the digit run not be preceded by a letter, so entity ids (o1, r1, l1)
+  // and the deliberate `order=oN` reference in the prompt are left alone.
+  return text
+    .replace(/₩?\s?(?<![A-Za-z])\d[\d,.]*\s?(원|P|포인트|점)?/g, ' (금액) ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function parseExplain(raw: string): { rootCause: string; riskLabel: string } {
-  const rc = raw.match(/ROOT_CAUSE:\s*([\s\S]+?)(?=\nRISK_LABEL:|$)/)?.[1]?.trim() ?? raw.trim();
+  const rc =
+    raw.match(/ROOT_CAUSE:\s*([\s\S]+?)(?=\nRISK_LABEL:|$)/)?.[1]?.trim() ??
+    '설명을 파싱하지 못했습니다.';
   const rl = raw.match(/RISK_LABEL:\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? 'Business Logic Abuse';
   return {
     rootCause: redactFigures(rc.replace(/RISK_LABEL:[\s\S]*$/, '').trim()),
-    riskLabel: rl,
+    riskLabel: redactFigures(rl),
   };
 }

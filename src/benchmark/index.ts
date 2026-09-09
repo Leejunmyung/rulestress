@@ -12,6 +12,7 @@ runBenchmark()
       'RS steps': r.ruleStress.steps,
       'RS netValue': r.ruleStress.netValue,
       'LLM-Direct executable': r.llmDirect.executableCounterexample,
+      'LLM error': r.llmError ?? '',
     })));
   })
   .catch((err) => {

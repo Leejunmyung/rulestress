@@ -1,23 +1,5 @@
 import type { RulesSpec, Scenario } from '../domain/types.js';
-
-const purchaseReward = {
-  id: 'purchase_reward',
-  trigger: { type: 'ORDER_PAID' as const },
-  conditions: [
-    { op: 'gte' as const, left: { field: 'event.amount' }, right: { constant: 50000 } },
-    { op: 'eq' as const, left: { field: 'event.paymentKind' }, right: { constant: 'CASH' } },
-  ],
-  effects: [
-    {
-      primitive: 'ISSUE_REWARD' as const,
-      args: {
-        identityId: { field: 'event.identityId' },
-        amount: { constant: 10000 },
-        sourceOrderId: { field: 'event.orderId' },
-      },
-    },
-  ],
-};
+import { purchaseReward } from './reward-settlement.js';
 
 export const REPURCHASE_RULES: RulesSpec = {
   rules: [purchaseReward],

@@ -109,6 +109,50 @@ describe('parseSequence', () => {
   it('returns null when nothing parseable is present', () => {
     expect(parseSequence('I cannot find a violating sequence.')).toBeNull();
   });
+
+  it('parses a single-line comma-separated answer with trailing punctuation', () => {
+    expect(
+      parseSequence('PURCHASE 50000, PURCHASE_WITH_POINTS 10000, CANCEL_ORDER o1.'),
+    ).toEqual([
+      { type: 'PURCHASE', identityId: 'id1', amount: 50000 },
+      { type: 'PURCHASE_WITH_POINTS', identityId: 'id1', amount: 10000 },
+      { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' },
+    ]);
+  });
+
+  it('parses a sequence that follows a paragraph of reasoning', () => {
+    const raw = [
+      'Let me think. First we buy to earn the reward, then spend it, then cancel.',
+      'The clawback only reclaims from the balance, so:',
+      'PURCHASE 50000',
+      'PURCHASE_WITH_POINTS 10000',
+      'CANCEL_ORDER o1',
+    ].join('\n');
+    expect(parseSequence(raw)).toEqual([
+      { type: 'PURCHASE', identityId: 'id1', amount: 50000 },
+      { type: 'PURCHASE_WITH_POINTS', identityId: 'id1', amount: 10000 },
+      { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' },
+    ]);
+  });
+
+  it('parses only the SEQUENCE: block, ignoring actions named in the reasoning', () => {
+    const raw = [
+      'Let me reason through this carefully.',
+      'If I try PURCHASE 50000 then CANCEL_ORDER o1 right away, the clawback fires and nothing leaks.',
+      'What about PURCHASE 49999 then PURCHASE_WITH_POINTS 10000 then CANCEL_ORDER o2? No, o2 is a POINTS order.',
+      'The reward sits on o1, so I should spend the points first, then cancel o1.',
+      '',
+      'SEQUENCE:',
+      'PURCHASE 50,000',
+      'PURCHASE_WITH_POINTS 10,000',
+      'CANCEL_ORDER o1',
+    ].join('\n');
+    expect(parseSequence(raw)).toEqual([
+      { type: 'PURCHASE', identityId: 'id1', amount: 50000 },
+      { type: 'PURCHASE_WITH_POINTS', identityId: 'id1', amount: 10000 },
+      { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' },
+    ]);
+  });
 });
 
 describe('buildLlmDirectPrompt', () => {

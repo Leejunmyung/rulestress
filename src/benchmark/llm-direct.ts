@@ -23,7 +23,9 @@ export function buildLlmDirectPrompt(
     'their preconditions, the execution semantics, and a set of parameter candidates.',
     'Your job: find an action sequence that makes the invariant FALSE.',
     'You must use ONLY the parameter candidate values, and the sequence length must be',
-    '<= maxDepth. Reply with the sequence and nothing else, one action per line.',
+    '<= maxDepth.',
+    'Show your reasoning first, then end your reply with a line "SEQUENCE:" followed by',
+    'the action sequence, one action per line and nothing after it.',
   ].join('\n');
 
   const actionSpec = [
@@ -40,6 +42,9 @@ export function buildLlmDirectPrompt(
     '                             the identity, status is PAID, paymentKind is CASH (POINTS',
     '                             orders cannot be cancelled). Order ids are assigned o1, o2, ...',
     '                             in creation order.',
+    '',
+    'Entity id rules: rewards are assigned ids r1, r2, ... and liabilities l1, l2, ... in',
+    'creation order (the same order they are consumed in — FIFO).',
   ].join('\n');
 
   const primitiveSemantics = [
@@ -110,7 +115,8 @@ export function buildLlmDirectPrompt(
     `  PURCHASE 50000`,
     `  PURCHASE_WITH_POINTS 10000`,
     `  CANCEL_ORDER o1`,
-    `Output only the sequence.`,
+    `Show your reasoning first. Then, on the final lines, output a marker line "SEQUENCE:"`,
+    `followed by the action sequence, one action per line and nothing after it.`,
   ].join('\n');
 
   return { system, user };
@@ -121,22 +127,32 @@ export function buildLlmDirectPrompt(
  * list markers / surrounding prose. Returns null if no action line is found.
  */
 export function parseSequence(raw: string): Action[] | null {
+  // The prompt asks the model to reason first, then emit a `SEQUENCE:` marker line.
+  // When present, parse ONLY the text after the LAST marker so actions named in the
+  // reasoning prose aren't harvested; otherwise fall back to the whole reply.
+  const markerIdx = raw.toUpperCase().lastIndexOf('SEQUENCE:');
+  let text = markerIdx >= 0 ? raw.slice(markerIdx + 'SEQUENCE:'.length) : raw;
+  // Strip digit-grouping commas so "50,000" doesn't split into "50" + "000".
+  text = text.replace(/(\d),(?=\d)/g, '$1');
+
   const actions: Action[] = [];
-  for (const line of raw.split('\n')) {
-    const cleaned = line.trim().replace(/^[-*\d.)\]\s]+/, '').trim();
+  // Split on commas/semicolons/newlines so a single-line comma-separated answer parses,
+  // and match each action anywhere in the fragment (tolerating trailing punctuation).
+  for (const fragment of text.split(/[,;\n]/)) {
+    const cleaned = fragment.trim().replace(/^[-*\d.)\]\s]+/, '').trim();
     if (cleaned === '') continue;
 
-    let m = /^PURCHASE_WITH_POINTS\s+(-?\d+)$/i.exec(cleaned);
+    let m = /PURCHASE_WITH_POINTS\s+(-?\d+)/i.exec(cleaned);
     if (m) {
       actions.push({ type: 'PURCHASE_WITH_POINTS', identityId: DEFAULT_IDENTITY, amount: Number(m[1]) });
       continue;
     }
-    m = /^PURCHASE\s+(-?\d+)$/i.exec(cleaned);
+    m = /PURCHASE\s+(-?\d+)/i.exec(cleaned);
     if (m) {
       actions.push({ type: 'PURCHASE', identityId: DEFAULT_IDENTITY, amount: Number(m[1]) });
       continue;
     }
-    m = /^CANCEL_ORDER\s+(\S+)$/i.exec(cleaned);
+    m = /CANCEL_ORDER\s+(o\d+)/i.exec(cleaned);
     if (m) {
       actions.push({ type: 'CANCEL_ORDER', identityId: DEFAULT_IDENTITY, orderId: m[1] });
       continue;
@@ -216,7 +232,8 @@ export async function llmDirectAttempt(
   rules: RulesSpec,
 ): Promise<{ executableCounterexample: boolean; sequence: Action[] | null }> {
   const { system, user } = buildLlmDirectPrompt(scenario, rules);
-  const raw = await callLLM(system, user);
+  // A search task needs room to reason before emitting the sequence.
+  const raw = await callLLM(system, user, { maxTokens: 4000 });
   const sequence = parseSequence(raw);
   if (sequence === null) {
     return { executableCounterexample: false, sequence: null };

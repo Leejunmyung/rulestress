@@ -50,6 +50,8 @@ pnpm gate1          # Gate 1: BFS finds the 3-step counterexample with no hint,
                     #         FIXED_RULES finds none at the same bounds
 pnpm typecheck
 pnpm build
+pnpm benchmark      # needs ANTHROPIC_API_KEY; prints the RuleStress vs LLM-Direct
+                    # comparison table (BFS detection vs. a raw-LLM sequence search)
 ```
 
 ## The demo path

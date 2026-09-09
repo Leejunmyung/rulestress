@@ -9,6 +9,7 @@ export type BenchRow = {
   name: string;
   ruleStress: { detected: boolean; steps: number | null; netValue: number | null };
   llmDirect: { executableCounterexample: boolean };
+  llmError?: string;
 };
 
 export type LlmAttemptFn = (
@@ -33,12 +34,21 @@ export async function runBenchmark(opts?: { llmAttempt?: LlmAttemptFn }): Promis
       netValue: result.trace ? identityNetExtractedValue(result.trace.finalState, 'id1') : null,
     };
 
-    const attempt = await llmAttempt(scenario, rules);
+    // One flaky LLM call must not kill the whole table.
+    let attempt: { executableCounterexample: boolean; sequence: Action[] | null };
+    let llmError: string | undefined;
+    try {
+      attempt = await llmAttempt(scenario, rules);
+    } catch (e) {
+      attempt = { executableCounterexample: false, sequence: null };
+      llmError = e instanceof Error ? e.message : String(e);
+    }
 
     rows.push({
       name: scenario.name,
       ruleStress,
       llmDirect: { executableCounterexample: attempt.executableCounterexample },
+      ...(llmError ? { llmError } : {}),
     });
   }
 
