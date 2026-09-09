@@ -5,6 +5,7 @@ import type { SearchResult } from '../../src/domain/types';
 import { getPreset } from '../../src/ui/lib/preset';
 import { runSearch } from '../../src/ui/lib/worker-client';
 import { RuleList } from '../../src/ui/components/RuleList';
+import { TraceView } from '../../src/ui/components/TraceView';
 
 type Phase =
   | { kind: 'idle' }
@@ -40,7 +41,10 @@ export default function SimulatePage() {
         <div className="flex items-center gap-3">
           <span className="text-sm text-neutral-400">Clawback 규칙</span>
           <button
-            onClick={() => setClawback((c) => (c === 'buggy' ? 'fixed' : 'buggy'))}
+            onClick={() => {
+              setClawback(clawback === 'buggy' ? 'fixed' : 'buggy');
+              setPhase({ kind: 'idle' });
+            }}
             className="rounded border border-neutral-700 px-3 py-1 text-sm"
           >
             {clawback === 'buggy' ? 'RECLAIM_REWARD (원본)' : 'RECLAIM_REWARD_FULL (수정)'}
@@ -61,19 +65,7 @@ export default function SimulatePage() {
 
       <section className="mt-8" data-testid="result">
         {phase.kind === 'error' && <p className="text-red-400">에러: {phase.message}</p>}
-        {phase.kind === 'done' && (
-          <pre className="overflow-x-auto rounded bg-neutral-900 p-4 text-xs">
-            {JSON.stringify(
-              {
-                trace: phase.result.trace ? phase.result.trace.steps.map((s) => s.action.type) : null,
-                violations: phase.result.violations,
-                explored: phase.result.explored,
-              },
-              null,
-              2,
-            )}
-          </pre>
-        )}
+        {phase.kind === 'done' && <TraceView result={phase.result} />}
       </section>
     </main>
   );
