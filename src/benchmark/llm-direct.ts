@@ -42,6 +42,34 @@ export function buildLlmDirectPrompt(
     '                             in creation order.',
   ].join('\n');
 
+  const primitiveSemantics = [
+    'Primitive semantics (what each rule effect does when it runs):',
+    '- ISSUE_REWARD(identityId, amount, sourceOrderId): appends a reward {grantedAmount=amount,',
+    '  remainingAmount=amount, spentAmount=0, reclaimedAmount=0} tagged with sourceOrderId, and',
+    '  adds amount to pointsBalance.',
+    '- SPEND_REWARD(identityId, amount): drains that identity\'s rewards in array order (FIFO) —',
+    '  for each reward: k = min(remainingAmount, left); remainingAmount -= k; spentAmount += k;',
+    '  pointsBalance -= k. Errors if the rewards cannot cover amount.',
+    '- RECLAIM_REWARD(sourceOrderId, limit): walks rewards for that sourceOrderId and reclaims',
+    '  ONLY from their current remainingAmount: k = min(remainingAmount, left); remainingAmount -= k;',
+    '  reclaimedAmount += k; pointsBalance -= k; left -= k, starting from left = limit. `limit` is',
+    '  bound to pointsBalance at execution time. It does not touch amounts already spent',
+    '  (spentAmount), and it creates no liability.',
+    '- RECLAIM_REWARD_FULL(sourceOrderId): reclaims what the balance allows',
+    '  (fromBalance = min(remainingAmount, pointsBalance)), then books the remaining shortfall',
+    '  (grantedAmount - reclaimedAmount, which includes already-spent amounts) as a liability',
+    '  against the identity.',
+    '- CREATE_LIABILITY(identityId, amount, sourceOrderId): records a debt; liabilities reduce the',
+    '  identity\'s net extracted value.',
+    '- Ref resolution timing: values inside an effect\'s args (field / constant) are resolved',
+    '  against the RUNNING state at the moment that effect executes; a rule\'s trigger/conditions',
+    '  are matched against the per-event entry snapshot (see below).',
+    '- IDENTITY_NET_EXTRACTED_VALUE = goodsRetained + cashRefunded + pointsBalance - cashPaid -',
+    '  (sum of that identity\'s liabilities). NET_BENEFIT_FROM_ORDER = sum over that order\'s',
+    '  rewards of (grantedAmount - reclaimedAmount) - (that order\'s liabilities). Invariants are',
+    '  checked against these metrics.',
+  ].join('\n');
+
   const execRules = [
     'Execution semantics:',
     '- Actions are applied in the given order. Each action first applies its base effects,',
@@ -65,6 +93,8 @@ export function buildLlmDirectPrompt(
     JSON.stringify(invariants, null, 2),
     ``,
     actionSpec,
+    ``,
+    primitiveSemantics,
     ``,
     execRules,
     ``,
@@ -160,11 +190,18 @@ export function replayLlmSequence(
       return { executableCounterexample: false, reason: `step ${i + 1}: transition invalid` };
     }
     state = nextState;
+
+    // BFS flags a counterexample as soon as ANY reached state violates an invariant,
+    // so a fair replay must accept an intermediate-state violation too (spec §10).
+    if (evaluateInvariants(state, scenario.invariants).length > 0) {
+      return { executableCounterexample: true, reason: `violation at step ${i + 1}` };
+    }
   }
 
+  // Fallback: covers the length-0 sequence and the initial state itself.
   const violations = evaluateInvariants(state, scenario.invariants);
   if (violations.length === 0) {
-    return { executableCounterexample: false, reason: 'final state does not violate the invariant' };
+    return { executableCounterexample: false, reason: 'no reached state violates the invariant' };
   }
 
   return { executableCounterexample: true, reason: 'ok' };

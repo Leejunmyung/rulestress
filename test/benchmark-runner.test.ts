@@ -7,6 +7,7 @@ import {
   buildLlmDirectPrompt,
 } from '../src/benchmark/llm-direct.js';
 import { rewardSettlementScenario, BUGGY_RULES } from '../src/scenarios/reward-settlement.js';
+import { repurchaseDoubleScenario, REPURCHASE_RULES } from '../src/scenarios/repurchase-double.js';
 
 const fakeAttempt = async () => ({ executableCounterexample: false, sequence: null });
 
@@ -70,6 +71,18 @@ describe('replayLlmSequence', () => {
     );
   });
 
+  it('accepts a sequence that violates at an intermediate step', () => {
+    const seq: Action[] = [
+      { type: 'PURCHASE', identityId: 'id1', amount: 50000 },
+      { type: 'PURCHASE', identityId: 'id1', amount: 50000 },
+      { type: 'PURCHASE', identityId: 'id1', amount: 50000 },
+    ];
+    expect(seq.length).toBeLessThanOrEqual(repurchaseDoubleScenario.bounds.maxDepth);
+    const res = replayLlmSequence(repurchaseDoubleScenario, REPURCHASE_RULES, seq);
+    expect(res.executableCounterexample).toBe(true);
+    expect(res.reason).toBe('violation at step 2');
+  });
+
   it('rejects a valid, in-bounds sequence that produces no violation', () => {
     const seq: Action[] = [{ type: 'PURCHASE', identityId: 'id1', amount: 50000 }];
     expect(replayLlmSequence(rewardSettlementScenario, BUGGY_RULES, seq).executableCounterexample).toBe(
@@ -107,5 +120,12 @@ describe('buildLlmDirectPrompt', () => {
     expect(user).toContain('FIFO');
     expect(user).toContain('50000');
     expect(user).toContain('"identities"');
+    // primitive semantics (§3) + Ref-resolution timing (§4) must be in the prompt
+    expect(user).toContain('Primitive semantics');
+    expect(user).toContain('ISSUE_REWARD');
+    expect(user).toContain('RECLAIM_REWARD');
+    expect(user).toContain('RECLAIM_REWARD_FULL');
+    expect(user).toContain('CREATE_LIABILITY');
+    expect(user).toContain('Ref resolution timing');
   });
 });
