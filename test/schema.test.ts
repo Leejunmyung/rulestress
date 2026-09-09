@@ -56,3 +56,55 @@ describe('loadScenario', () => {
     expect(result.initialState.orders[1].id).toBe('o2');
   });
 });
+
+describe('loadScenario — effect validation', () => {
+  const base = () => structuredClone(valid);
+
+  it('rejects an unknown primitive', () => {
+    const bad = base();
+    bad.rules.rules = [
+      {
+        id: 'r',
+        trigger: { type: 'ORDER_PAID' },
+        conditions: [],
+        effects: [{ primitive: 'NOT_A_PRIMITIVE', args: {} }],
+      },
+    ] as any;
+    expect(() => loadScenario(bad)).toThrow(/NOT_A_PRIMITIVE|invalid enum/i);
+  });
+
+  it('rejects an effect missing a required arg', () => {
+    const bad = base();
+    bad.rules.rules = [
+      {
+        id: 'r',
+        trigger: { type: 'ORDER_PAID' },
+        conditions: [],
+        effects: [{ primitive: 'ISSUE_REWARD', args: { identityId: { field: 'event.identityId' } } }],
+      },
+    ] as any;
+    expect(() => loadScenario(bad)).toThrow(/ISSUE_REWARD.*(missing|required).*(amount|sourceOrderId)/i);
+  });
+
+  it('accepts a well-formed effect', () => {
+    const ok = base();
+    ok.rules.rules = [
+      {
+        id: 'r',
+        trigger: { type: 'ORDER_PAID' },
+        conditions: [],
+        effects: [
+          {
+            primitive: 'ISSUE_REWARD',
+            args: {
+              identityId: { field: 'event.identityId' },
+              amount: { constant: 10000 },
+              sourceOrderId: { field: 'event.orderId' },
+            },
+          },
+        ],
+      },
+    ] as any;
+    expect(() => loadScenario(ok)).not.toThrow();
+  });
+});

@@ -1,6 +1,34 @@
 import { z } from 'zod';
-import type { Scenario } from './types.js';
+import type { Scenario, PrimitiveType } from './types.js';
 import { assertInternalInvariants } from './invariants.js';
+
+const PRIMITIVE_TYPES = [
+  'CREATE_ORDER',
+  'SET_ORDER_STATUS',
+  'ADD_CASH_PAID',
+  'ADD_CASH_REFUNDED',
+  'ADD_GOODS',
+  'ISSUE_REWARD',
+  'SPEND_REWARD',
+  'RECLAIM_REWARD',
+  'RECLAIM_REWARD_FULL',
+  'CREATE_LIABILITY',
+  'SET_FLAG',
+] as const;
+
+const REQUIRED_ARGS: Record<PrimitiveType, string[]> = {
+  CREATE_ORDER: ['identityId', 'amount', 'paymentKind'],
+  SET_ORDER_STATUS: ['orderId', 'status'],
+  ADD_CASH_PAID: ['identityId', 'value'],
+  ADD_CASH_REFUNDED: ['identityId', 'value'],
+  ADD_GOODS: ['identityId', 'value'],
+  ISSUE_REWARD: ['identityId', 'amount', 'sourceOrderId'],
+  SPEND_REWARD: ['identityId', 'amount'],
+  RECLAIM_REWARD: ['sourceOrderId', 'limit'],
+  RECLAIM_REWARD_FULL: ['sourceOrderId'],
+  CREATE_LIABILITY: ['identityId', 'amount', 'sourceOrderId'],
+  SET_FLAG: ['identityId', 'key', 'value'],
+};
 
 const nonNegInt = z
   .number()
@@ -87,7 +115,7 @@ const scenarioSchema = z.object({
         id: z.string(),
         trigger: z.object({ type: z.enum(['ORDER_PAID', 'ORDER_CANCELLED', 'POINTS_SPENT']) }),
         conditions: z.array(exprSchema),
-        effects: z.array(z.object({ primitive: z.string(), args: z.record(refSchema) })),
+        effects: z.array(z.object({ primitive: z.enum(PRIMITIVE_TYPES), args: z.record(refSchema) })),
       }),
     ),
   }),
@@ -125,6 +153,19 @@ export function loadScenario(raw: unknown): Scenario {
   assertSequentialIds('o', s.initialState.orders.map((o) => o.id));
   assertSequentialIds('r', s.initialState.rewards.map((r) => r.id));
   assertSequentialIds('l', s.initialState.liabilities.map((l) => l.id));
+
+  for (const rule of s.rules.rules) {
+    for (const effect of rule.effects) {
+      const required = REQUIRED_ARGS[effect.primitive as PrimitiveType] ?? [];
+      for (const arg of required) {
+        if (!(arg in effect.args)) {
+          throw new Error(
+            `invalid scenario — effect ${effect.primitive} in rule ${rule.id} missing required arg ${arg}`,
+          );
+        }
+      }
+    }
+  }
 
   assertInternalInvariants(s.initialState);
 
