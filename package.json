@@ -13,6 +13,7 @@
     "gate1": "vitest run test/gate1.test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "next": "^15.5.25",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

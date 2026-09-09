@@ -2,6 +2,7 @@ import type { SearchResult } from '../../domain/types';
 import { identityNetExtractedValue } from '../../invariants/metrics';
 import { ledgerDelta } from '../lib/state-diff';
 import { StateDeltaTable } from './StateDeltaTable';
+import { ExplainCard } from './ExplainCard';
 
 export function TraceView({ result }: { result: SearchResult }) {
   if (!result.trace) {
@@ -22,6 +23,7 @@ export function TraceView({ result }: { result: SearchResult }) {
         <p className="mt-1 text-xs text-neutral-400">
           Violated intent: {violations.map((v) => v.invariantId).join(', ')} · {result.explored} states explored
         </p>
+        {trace && <ExplainCard trace={trace} violations={violations} />}
       </div>
 
       <ol className="space-y-3">
