@@ -1,4 +1,5 @@
 import type { SimulationState, SimEvent, Ref, Expr, Effect, EffectTemplate } from '../domain/types.js';
+import { compare } from './compare.js';
 
 export type EvalCtx = { state: SimulationState; event: SimEvent };
 
@@ -24,26 +25,6 @@ export function resolveRef(ref: Ref, ctx: EvalCtx): number | string | boolean {
     return identity?.flags[key] ?? false;
   }
   throw new Error(`resolveRef: unknown ref ${path}`);
-}
-
-function compare(op: string, l: number | string | boolean, r: number | string | boolean): boolean {
-  switch (op) {
-    case 'eq': return l === r;
-    case 'ne': return l !== r;
-    case 'gte':
-      if (typeof l !== 'number' || typeof r !== 'number') throw new Error(`compare: ${op} requires numeric operands, got ${typeof l} and ${typeof r}`);
-      return l >= r;
-    case 'lte':
-      if (typeof l !== 'number' || typeof r !== 'number') throw new Error(`compare: ${op} requires numeric operands, got ${typeof l} and ${typeof r}`);
-      return l <= r;
-    case 'gt':
-      if (typeof l !== 'number' || typeof r !== 'number') throw new Error(`compare: ${op} requires numeric operands, got ${typeof l} and ${typeof r}`);
-      return l > r;
-    case 'lt':
-      if (typeof l !== 'number' || typeof r !== 'number') throw new Error(`compare: ${op} requires numeric operands, got ${typeof l} and ${typeof r}`);
-      return l < r;
-    default: throw new Error(`compare: unknown op ${op}`);
-  }
 }
 
 export function evalExpr(expr: Expr, ctx: EvalCtx): boolean {

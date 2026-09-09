@@ -23,4 +23,21 @@ export function assertInternalInvariants(state: SimulationState): void {
       );
     }
   }
+
+  // Reverse check: every reward/liability identity must have a ledger row, otherwise
+  // the pointsBalance == Σremaining conservation check above would silently skip it.
+  for (const r of state.rewards) {
+    if (!(r.identityId in state.ledger)) {
+      throw new Error(
+        `internal invariant: reward ${r.id} references identity ${r.identityId} with no ledger`,
+      );
+    }
+  }
+  for (const l of state.liabilities) {
+    if (!(l.identityId in state.ledger)) {
+      throw new Error(
+        `internal invariant: liability ${l.id} references identity ${l.identityId} with no ledger`,
+      );
+    }
+  }
 }

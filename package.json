@@ -9,9 +9,11 @@
     "typecheck": "tsc --noEmit",
     "gate1": "vitest run test/gate1.test.ts"
   },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
   "devDependencies": {
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "zod": "^3.23.0"
+    "vitest": "^2.1.0"
   }
 }

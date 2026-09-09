@@ -1,5 +1,6 @@
 import type { SimulationState, InvariantSpec, InvExpr, InvOperand, Violation } from '../domain/types.js';
 import { identityNetExtractedValue, netBenefitFromOrder } from './metrics.js';
+import { compare } from '../rules/compare.js';
 
 type Entity = { id: string } & Record<string, unknown>;
 
@@ -27,18 +28,6 @@ function resolveOperand(
     return netBenefitFromOrder(state, thisEntity.id);
   }
   throw new Error(`resolveOperand: unknown metric`);
-}
-
-function compare(op: string, l: number | string | boolean, r: number | string | boolean): boolean {
-  switch (op) {
-    case 'eq': return l === r;
-    case 'ne': return l !== r;
-    case 'gte': return (l as number) >= (r as number);
-    case 'lte': return (l as number) <= (r as number);
-    case 'gt': return (l as number) > (r as number);
-    case 'lt': return (l as number) < (r as number);
-    default: throw new Error(`compare: unknown op ${op}`);
-  }
 }
 
 function evalInv(
