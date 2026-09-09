@@ -1,6 +1,6 @@
 import type { SimulationState, InvariantSpec, InvExpr, InvOperand, Violation } from '../domain/types.js';
 import { identityNetExtractedValue, netBenefitFromOrder } from './metrics.js';
-import { compare } from '../rules/compare.js';
+import { compare } from '../shared/compare.js';
 
 type Entity = { id: string } & Record<string, unknown>;
 

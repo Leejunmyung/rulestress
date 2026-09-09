@@ -1,5 +1,5 @@
 import type { SimulationState, SimEvent, Ref, Expr, Effect, EffectTemplate } from '../domain/types.js';
-import { compare } from './compare.js';
+import { compare } from '../shared/compare.js';
 
 export type EvalCtx = { state: SimulationState; event: SimEvent };
 
