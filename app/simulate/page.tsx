@@ -27,6 +27,11 @@ export default function SimulatePage() {
   const activeRules = clawback === 'buggy' ? preset.buggyRules : preset.fixedRules;
   const busy = phase.kind === 'running' || rerun.running;
 
+  // Internal errors (worker crashes, invariant assertions) carry engine identifiers
+  // that mean nothing to a viewer — log the real message for debugging, show a
+  // generic one in the UI.
+  const GENERIC_ERROR = '탐색 중 오류가 발생했습니다. 다시 시도해주세요.';
+
   async function run() {
     setPhase({ kind: 'running' });
     setAfterResult(null);
@@ -35,7 +40,8 @@ export default function SimulatePage() {
       const result = await runSearch(preset.scenario, activeRules);
       setPhase({ kind: 'done', result });
     } catch (e) {
-      setPhase({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+      console.error('search failed', e);
+      setPhase({ kind: 'error', message: GENERIC_ERROR });
     }
   }
 
@@ -46,7 +52,8 @@ export default function SimulatePage() {
       setAfterResult(result);
       setRerun({ running: false, error: null });
     } catch (e) {
-      setRerun({ running: false, error: e instanceof Error ? e.message : String(e) });
+      console.error('re-run failed', e);
+      setRerun({ running: false, error: GENERIC_ERROR });
     }
   }
 
@@ -75,7 +82,7 @@ export default function SimulatePage() {
             disabled={busy}
             className="rounded border border-neutral-700 px-3 py-1 text-sm disabled:opacity-50"
           >
-            {clawback === 'buggy' ? '부분 회수 (버그)' : '전액 회수 (수정)'}
+            {clawback === 'buggy' ? '부분 회수 (버그)' : '전액 정산 (수정)'}
           </button>
         </div>
         <div className="mt-4">
@@ -92,11 +99,18 @@ export default function SimulatePage() {
       </button>
 
       <section className="mt-8" data-testid="result">
-        {phase.kind === 'error' && <p className="text-red-400">에러: {phase.message}</p>}
-        {phase.kind === 'done' && <TraceView result={phase.result} />}
+        {phase.kind === 'error' && <p className="text-red-400">{phase.message}</p>}
+        {phase.kind === 'done' && (
+          <TraceView
+            result={phase.result}
+            clawback={clawback}
+            bounds={preset.scenario.bounds}
+            params={preset.scenario.params}
+          />
+        )}
         {phase.kind === 'done' && phase.result.trace && (
           <>
-            {rerun.error && <p className="mt-4 text-sm text-red-400">Re-run 에러: {rerun.error}</p>}
+            {rerun.error && <p className="mt-4 text-sm text-red-400">{rerun.error}</p>}
             {afterResult === null && (
               <button
                 onClick={rerunWithFix}

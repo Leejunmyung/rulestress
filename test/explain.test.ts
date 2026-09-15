@@ -7,14 +7,25 @@ describe('explain prompt', () => {
   it('includes the action sequence and forbids figure computation', () => {
     const { trace, violations } = bfs(rewardSettlementScenario, BUGGY_RULES);
     expect(trace).not.toBeNull();
-    const { system, user } = buildExplainPrompt(trace!, violations);
+    const { system, user } = buildExplainPrompt(trace!, violations, BUGGY_RULES);
     expect(system).toMatch(/NEVER compute/i);
-    expect(user).toContain('PURCHASE');
-    expect(user).toContain('PURCHASE_WITH_POINTS');
-    expect(user).toContain('CANCEL_ORDER');
+    // action sequence is in Korean, not the English wire identifiers
+    expect(user).toContain('현금 구매');
+    expect(user).toContain('포인트로 구매');
+    expect(user).toContain('주문 취소');
     expect(user).toContain('no_benefit_after_cancel');
+    // the rule/effect grounding block is present (structure, not figures)
+    expect(user).toContain('purchase_reward');
+    expect(user).toContain('RECLAIM_REWARD');
     // no amounts / currency figures are ever sent to the model
     expect(user).not.toMatch(/50000|10000|amount=/);
+  });
+
+  it('elides numeric rule constants to a placeholder', () => {
+    const { trace, violations } = bfs(rewardSettlementScenario, BUGGY_RULES);
+    const { user } = buildExplainPrompt(trace!, violations, BUGGY_RULES);
+    expect(user).toContain('<threshold>');
+    expect(user).not.toMatch(/\b50000\b|\b10000\b/);
   });
 
   it('redacts currency figures the model might restate', () => {
@@ -25,6 +36,22 @@ describe('explain prompt', () => {
     expect(out.rootCause).not.toMatch(/\d/);
     expect(out.rootCause).not.toMatch(/10,000P|포인트 50000|50000 상당/);
     expect(out.rootCause).toContain('(금액)');
+  });
+
+  it('redacts full-width digits and Korean numeral+unit phrases', () => {
+    const out = parseExplain(
+      'ROOT_CAUSE: 취소 후 １００００원이 남고, 오만원 상당의 상품과 십만 포인트가 남고 만원이 남는다.\nRISK_LABEL: X',
+    );
+    expect(out.rootCause).not.toMatch(/[０-９]/);
+    expect(out.rootCause).not.toMatch(/오만원|십만 ?포인트|만원/);
+    expect(out.rootCause).toContain('(금액)');
+  });
+
+  it('does not mangle ordinary Korean words that happen to contain numeral characters', () => {
+    const out = parseExplain(
+      'ROOT_CAUSE: 근본 원인이 무엇인지 살펴보면, 결국 구원받을 방법은 규칙 수정뿐이다.\nRISK_LABEL: X',
+    );
+    expect(out.rootCause).toBe('근본 원인이 무엇인지 살펴보면, 결국 구원받을 방법은 규칙 수정뿐이다.');
   });
 
   it('leaves entity id references (o1, r1, l1) untouched', () => {

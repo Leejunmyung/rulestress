@@ -82,7 +82,11 @@ export function buildLlmDirectPrompt(
     '- Rule matching for one event uses a snapshot of the state taken at the start of that',
     "  event; an effect from an earlier-in-the-list rule does not change a later rule's match.",
     '- No rule cascading: an effect never emits a new event.',
-    '- EffectTemplate Ref values (field / constant) are resolved against the snapshot + event.',
+    '- EffectTemplate Ref values (field / constant) are resolved against the RUNNING state at the',
+    '  moment each effect executes — NOT the entry snapshot. Only trigger/condition matching uses',
+    '  the entry snapshot; once a rule matches, its effects read whatever the running state is by',
+    '  the time they run (which can include changes made by an earlier effect in the same rule, or',
+    '  an earlier-applied rule for the same event).',
     '- Reward consumption (SPEND_REWARD, RECLAIM_REWARD) drains rewards in array order (FIFO).',
     '- Single identity only.',
   ].join('\n');
@@ -124,14 +128,16 @@ export function buildLlmDirectPrompt(
 
 /**
  * Parse an LLM reply into an Action[]. Accepts a simple line format and tolerates
- * list markers / surrounding prose. Returns null if no action line is found.
+ * list markers / surrounding prose. Returns null if no action line is found, OR
+ * (when a `SEQUENCE:` marker is present) if any line in that block fails to parse.
  */
 export function parseSequence(raw: string): Action[] | null {
   // The prompt asks the model to reason first, then emit a `SEQUENCE:` marker line.
   // When present, parse ONLY the text after the LAST marker so actions named in the
   // reasoning prose aren't harvested; otherwise fall back to the whole reply.
   const markerIdx = raw.toUpperCase().lastIndexOf('SEQUENCE:');
-  let text = markerIdx >= 0 ? raw.slice(markerIdx + 'SEQUENCE:'.length) : raw;
+  const hasMarker = markerIdx >= 0;
+  let text = hasMarker ? raw.slice(markerIdx + 'SEQUENCE:'.length) : raw;
   // Strip digit-grouping commas so "50,000" doesn't split into "50" + "000".
   text = text.replace(/(\d),(?=\d)/g, '$1');
 
@@ -157,6 +163,13 @@ export function parseSequence(raw: string): Action[] | null {
       actions.push({ type: 'CANCEL_ORDER', identityId: DEFAULT_IDENTITY, orderId: m[1] });
       continue;
     }
+
+    // Without a marker, the reply is unstructured prose + bare action lines —
+    // stay lenient and skip whatever doesn't match. WITH a marker, the model
+    // was explicitly told everything after it is pure action lines; a fragment
+    // that fails to parse there (e.g. "WAIT 1") means the model's actual answer
+    // isn't executable as given, so fail closed rather than silently drop it.
+    if (hasMarker) return null;
   }
   return actions.length > 0 ? actions : null;
 }

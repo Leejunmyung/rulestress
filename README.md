@@ -50,8 +50,11 @@ pnpm gate1          # Gate 1: BFS finds the 3-step counterexample with no hint,
                     #         FIXED_RULES finds none at the same bounds
 pnpm typecheck
 pnpm build
-pnpm benchmark      # needs ANTHROPIC_API_KEY; prints the RuleStress vs LLM-Direct
-                    # comparison table (BFS detection vs. a raw-LLM sequence search)
+pnpm benchmark      # needs ANTHROPIC_API_KEY (reads it from .env.local automatically,
+                    # same file the Explain button uses); prints the RuleStress vs
+                    # LLM-Direct comparison table (BFS detection vs. a raw-LLM search).
+                    # If the key is missing, every row's "LLM-Direct executable" is a
+                    # call failure, not a negative search result — check "LLM error".
 ```
 
 ## The demo path
@@ -82,3 +85,17 @@ pnpm benchmark      # needs ANTHROPIC_API_KEY; prints the RuleStress vs LLM-Dire
 - Single identity; the demo uses a fixed action space (PURCHASE / PURCHASE_WITH_POINTS / CANCEL_ORDER).
 - Structured input only — no natural-language rule compiler in this build.
 - `validActions` duplicates `actionPrecondition`'s predicate; unify when the action space grows.
+- `/api/explain` rate limiting: the per-IP bucket keys off `x-real-ip` /
+  `x-forwarded-for`, which are client-supplied headers Vercel does not verify —
+  a caller can get a fresh bucket per request by varying the header. The
+  per-instance **global** cap (30 calls/60s, independent of any header) is the
+  actual backstop against runaway Anthropic spend; both counters reset when a
+  serverless instance recycles. For a public deploy beyond a demo, put a
+  monthly spend cap on the Anthropic API key in the Anthropic console, and
+  replace both counters with a shared store (e.g. Upstash/Vercel KV).
+- `redactFigures` (in `src/llm/explain.ts`) is a best-effort regex scrub, not a
+  formally verified guarantee — it strips ASCII and full-width digit runs and
+  common Korean numeral+unit phrases (e.g. `오만원`), but does not cover every
+  possible numeral encoding. The system prompt instructs the model not to
+  restate figures at all; the regex is defense-in-depth on top of that, not
+  the sole safeguard.

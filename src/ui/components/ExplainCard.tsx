@@ -12,9 +12,11 @@ type State =
 export function ExplainCard({
   trace,
   violations,
+  clawback,
 }: {
   trace: CounterexampleTrace;
   violations: Violation[];
+  clawback: 'buggy' | 'fixed';
 }) {
   const [state, setState] = useState<State>({ k: 'idle' });
 
@@ -24,13 +26,13 @@ export function ExplainCard({
       const res = await fetch('/api/explain', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ trace, violations }),
+        body: JSON.stringify({ trace, violations, clawback }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'explain failed');
       setState({ k: 'done', rootCause: data.rootCause, riskLabel: data.riskLabel });
-    } catch (e) {
-      setState({ k: 'error', message: e instanceof Error ? e.message : String(e) });
+    } catch {
+      setState({ k: 'error', message: '설명을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.' });
     }
   }
 

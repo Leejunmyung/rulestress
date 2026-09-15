@@ -153,6 +153,21 @@ describe('parseSequence', () => {
       { type: 'CANCEL_ORDER', identityId: 'id1', orderId: 'o1' },
     ]);
   });
+
+  it('fails closed when a SEQUENCE: block contains an unparseable line (e.g. WAIT)', () => {
+    const raw = ['SEQUENCE:', 'PURCHASE 50000', 'WAIT 1', 'PURCHASE_WITH_POINTS 10000', 'CANCEL_ORDER o1'].join(
+      '\n',
+    );
+    // The model's literal answer isn't a valid action sequence — replaying only the
+    // three actions the parser recognizes and calling that success would credit the
+    // LLM for an answer it never actually gave.
+    expect(parseSequence(raw)).toBeNull();
+  });
+
+  it('stays lenient (no marker): skips prose lines that match no action pattern', () => {
+    const raw = ['Some unrelated commentary here.', 'PURCHASE 50000'].join('\n');
+    expect(parseSequence(raw)).toEqual([{ type: 'PURCHASE', identityId: 'id1', amount: 50000 }]);
+  });
 });
 
 describe('buildLlmDirectPrompt', () => {

@@ -29,7 +29,10 @@ export const PRIMITIVE_LABELS: Record<PrimitiveType, string> = {
   ISSUE_REWARD: '포인트 지급',
   SPEND_REWARD: '포인트 사용',
   RECLAIM_REWARD: '포인트 잔액만큼만 회수 (버그)',
-  RECLAIM_REWARD_FULL: '지급분 전액 회수 (수정)',
+  // Not a true full recovery: the already-spent portion becomes a liability
+  // (an assumed-collectible debt), not cash actually clawed back. See
+  // TraceView's liability callout, which surfaces this assumption in the demo.
+  RECLAIM_REWARD_FULL: '전액 정산 (초과분은 채무로 기록, 수정)',
   CREATE_LIABILITY: '미회수 채무 기록',
   SET_FLAG: '플래그 설정',
 };
