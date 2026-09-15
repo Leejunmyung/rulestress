@@ -1,10 +1,26 @@
 import Link from 'next/link';
 
 const PILLARS = [
-  ['AI Formalization', '자연어 규칙·의도를 구조화된 스펙으로'],
-  ['Finite Abstraction', '무한 입력 공간을 의미 있는 유한 상태로'],
-  ['Deterministic Simulation', '규칙을 실제로 실행'],
-  ['Bounded Exhaustive Search', '경계 안의 모든 reachable state 검사'],
+  {
+    title: '감이 아니라 구조로 분석',
+    caption: 'AI Formalization',
+    desc: '자연어로 적힌 규칙과 기획 의도를 컴퓨터가 검사할 수 있는 형태로 정리합니다',
+  },
+  {
+    title: '빠짐없이 다 뒤짐',
+    caption: 'Bounded Exhaustive Search',
+    desc: '정해진 범위 안에서 가능한 모든 행동 순서를 하나도 빠뜨리지 않고 검사합니다',
+  },
+  {
+    title: '실제로 실행해서 확인',
+    caption: 'Deterministic Simulation',
+    desc: '규칙을 실제 코드처럼 실행한 결과이지, AI의 추측이 아닙니다',
+  },
+  {
+    title: '무한한 경우의 수를 유한하게',
+    caption: 'Finite Abstraction',
+    desc: '금액·순서가 무한히 다양해도, 의미 있는 경우의 수로 압축해 다룰 수 있게 만듭니다',
+  },
 ];
 
 export default function Home() {
@@ -23,13 +39,17 @@ export default function Home() {
         href="/simulate"
         className="mt-8 inline-block rounded bg-emerald-500 px-5 py-2.5 font-medium text-neutral-950"
       >
-        내 이벤트 스트레스 테스트하기
+        데모로 실제 반례 찾아보기
       </Link>
+      <p className="mt-2 text-xs text-neutral-500">
+        지금은 샘플 시나리오 1개로 데모합니다. 내 규칙 입력 기능은 준비 중입니다.
+      </p>
       <ul className="mt-16 grid grid-cols-2 gap-4">
-        {PILLARS.map(([t, d]) => (
-          <li key={t} className="rounded border border-neutral-800 p-4">
-            <p className="font-medium text-emerald-400">{t}</p>
-            <p className="mt-1 text-sm text-neutral-400">{d}</p>
+        {PILLARS.map((p) => (
+          <li key={p.title} className="rounded border border-neutral-800 p-4">
+            <p className="font-medium text-emerald-400">{p.title}</p>
+            <p className="mt-1 text-sm text-neutral-400">{p.desc}</p>
+            <p className="mt-2 text-xs text-neutral-600">{p.caption}</p>
           </li>
         ))}
       </ul>

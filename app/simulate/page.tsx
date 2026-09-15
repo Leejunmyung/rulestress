@@ -56,10 +56,15 @@ export default function SimulatePage() {
       <p className="mt-2 text-sm text-neutral-400">
         기획 의도: 전액 환불된(취소된) 주문은 사용자에게 순경제적 혜택을 남기지 않는다.
       </p>
+      <p className="mt-4 max-w-2xl text-sm leading-relaxed text-neutral-400">
+        아래 두 규칙은 실제 포인트 적립·회수 로직입니다. <strong className="text-neutral-300">탐색 시작</strong>을
+        누르면 가능한 모든 구매·취소 순서를 컴퓨터가 하나도 빠짐없이 대입해보고, 위 의도를 깨는 경로가
+        있는지 찾아냅니다.
+      </p>
 
       <section className="mt-8">
         <div className="flex items-center gap-3">
-          <span className="text-sm text-neutral-400">Clawback 규칙</span>
+          <span className="text-sm text-neutral-400">포인트 회수 방식</span>
           <button
             onClick={() => {
               setClawback(clawback === 'buggy' ? 'fixed' : 'buggy');
@@ -70,7 +75,7 @@ export default function SimulatePage() {
             disabled={busy}
             className="rounded border border-neutral-700 px-3 py-1 text-sm disabled:opacity-50"
           >
-            {clawback === 'buggy' ? 'RECLAIM_REWARD (원본)' : 'RECLAIM_REWARD_FULL (수정)'}
+            {clawback === 'buggy' ? '부분 회수 (버그)' : '전액 회수 (수정)'}
           </button>
         </div>
         <div className="mt-4">
@@ -83,7 +88,7 @@ export default function SimulatePage() {
         disabled={busy}
         className="mt-8 rounded bg-emerald-500 px-4 py-2 font-medium text-neutral-950 disabled:opacity-50"
       >
-        {phase.kind === 'running' ? '탐색 중…' : 'Run'}
+        {phase.kind === 'running' ? '탐색 중…' : '탐색 시작'}
       </button>
 
       <section className="mt-8" data-testid="result">
@@ -98,7 +103,7 @@ export default function SimulatePage() {
                 disabled={rerun.running}
                 className="mt-6 rounded border border-emerald-700 px-4 py-2 text-sm font-medium text-emerald-300 disabled:opacity-50"
               >
-                {rerun.running ? '탐색 중…' : 'Re-run with fix'}
+                {rerun.running ? '탐색 중…' : '수정한 규칙으로 다시 탐색'}
               </button>
             )}
             {afterResult !== null && (

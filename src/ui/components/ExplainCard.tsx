@@ -40,7 +40,7 @@ export function ExplainCard({
         onClick={explain}
         className="mt-4 rounded border border-neutral-700 px-3 py-1 text-sm"
       >
-        Explain
+        왜 깨졌는지 설명 보기
       </button>
     );
   }
