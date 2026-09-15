@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { callLLM } from '../../../src/llm/provider';
-import { buildExplainPrompt, parseExplain } from '../../../src/llm/explain';
+import { buildExplainPrompt, collectIdentifiers, parseExplain } from '../../../src/llm/explain';
 import { BUGGY_RULES, FIXED_RULES } from '../../../src/scenarios/reward-settlement';
 
 export const runtime = 'nodejs';
@@ -72,14 +72,11 @@ function clientIp(req: NextRequest): string {
 
 export async function POST(req: NextRequest) {
   try {
-    if (globalRateLimited()) {
-      return NextResponse.json({ error: 'rate limit exceeded (server busy)' }, { status: 429 });
-    }
-    const ip = clientIp(req);
-    if (rateLimited(ip)) {
-      return NextResponse.json({ error: 'rate limit exceeded (max 10 / 60s)' }, { status: 429 });
-    }
-
+    // Validate the request BEFORE touching either rate limit. Both counters
+    // exist to bound Anthropic calls, so they must only count requests that
+    // are actually about to trigger one — counting malformed junk here would
+    // let an attacker exhaust the global budget with free 400s and deny the
+    // feature to real users without spending a single token.
     const body = await req.json();
     const trace = body?.trace;
     const violations = body?.violations;
@@ -133,12 +130,23 @@ export async function POST(req: NextRequest) {
     }
     const clawback: 'buggy' | 'fixed' = clawbackRaw;
 
-    const { system, user } = buildExplainPrompt(trace, violations, RULESETS[clawback]);
+    // Rate limits apply only from here — the request is well-formed and is
+    // actually about to spend an Anthropic call.
+    if (globalRateLimited()) {
+      return NextResponse.json({ error: 'rate limit exceeded (server busy)' }, { status: 429 });
+    }
+    const ip = clientIp(req);
+    if (rateLimited(ip)) {
+      return NextResponse.json({ error: 'rate limit exceeded (max 10 / 60s)' }, { status: 429 });
+    }
+
+    const rules = RULESETS[clawback];
+    const { system, user } = buildExplainPrompt(trace, violations, rules);
     const raw = await callLLM(system, user);
     if (!raw.trim()) {
       return NextResponse.json({ error: 'empty response from model' }, { status: 502 });
     }
-    return NextResponse.json(parseExplain(raw));
+    return NextResponse.json(parseExplain(raw, collectIdentifiers(rules, violations)));
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },

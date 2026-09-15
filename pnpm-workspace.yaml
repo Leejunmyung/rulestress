@@ -1,5 +1,5 @@
-onlyBuiltDependencies:
-  - esbuild
 verifyDepsBeforeRun: false
 overrides:
-  postcss: '>=8.5.23'
+  postcss: '>=8.5.23 <9'
+allowBuilds:
+  esbuild: true

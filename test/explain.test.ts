@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { bfs } from '../src/search/bfs.js';
 import { rewardSettlementScenario, BUGGY_RULES } from '../src/scenarios/reward-settlement.js';
-import { buildExplainPrompt, parseExplain } from '../src/llm/explain.js';
+import { buildExplainPrompt, collectIdentifiers, parseExplain } from '../src/llm/explain.js';
 
 describe('explain prompt', () => {
   it('includes the action sequence and forbids figure computation', () => {
@@ -52,6 +52,28 @@ describe('explain prompt', () => {
       'ROOT_CAUSE: 근본 원인이 무엇인지 살펴보면, 결국 구원받을 방법은 규칙 수정뿐이다.\nRISK_LABEL: X',
     );
     expect(out.rootCause).toBe('근본 원인이 무엇인지 살펴보면, 결국 구원받을 방법은 규칙 수정뿐이다.');
+  });
+
+  it('does not mangle single-syllable-numeral words like 사원/이점/오점/만점/백점', () => {
+    const out = parseExplain(
+      'ROOT_CAUSE: 이 규칙의 이점을 악용하면 사원 계정도 오점 없이 만점짜리 백점 결과를 만든다.\nRISK_LABEL: X',
+    );
+    expect(out.rootCause).toBe(
+      '이 규칙의 이점을 악용하면 사원 계정도 오점 없이 만점짜리 백점 결과를 만든다.',
+    );
+  });
+
+  it('scrubs known wire identifiers (rule/event/primitive/invariant ids) from ROOT_CAUSE', () => {
+    const ids = collectIdentifiers(BUGGY_RULES, [{ invariantId: 'no_benefit_after_cancel', detail: '' }]);
+    expect(ids).toEqual(
+      expect.arrayContaining(['purchase_reward', 'clawback_on_cancel', 'RECLAIM_REWARD', 'ISSUE_REWARD', 'no_benefit_after_cancel']),
+    );
+    const out = parseExplain(
+      'ROOT_CAUSE: RECLAIM_REWARD가 사용된 포인트를 처리하지 못해 no_benefit_after_cancel이 깨진다.\nRISK_LABEL: X',
+      ids,
+    );
+    expect(out.rootCause).not.toMatch(/RECLAIM_REWARD|no_benefit_after_cancel/);
+    expect(out.rootCause).toContain('(규칙 이름 생략)');
   });
 
   it('leaves entity id references (o1, r1, l1) untouched', () => {

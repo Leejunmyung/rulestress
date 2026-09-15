@@ -23,8 +23,10 @@ Built for the Wanted AI Championship 2026.
   computed by the simulator. A clawback-rule toggle + **Re-run with fix** shows the
   Before/After.
 - **LLM explain** (`/api/explain`) — turns a verified counterexample into a Korean
-  root-cause paragraph + a risk label. The model never computes or restates
-  monetary figures; all numbers come from the simulator.
+  root-cause paragraph + a risk label. All numbers come from the simulator; the
+  model is instructed never to compute or restate monetary figures, and a
+  best-effort server-side scrub backs that up (see "Known limits" — it isn't a
+  formally verified guarantee).
 
 ## Run locally
 

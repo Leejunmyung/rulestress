@@ -11,7 +11,10 @@ import { BeforeAfterPanel } from '../../src/ui/components/BeforeAfterPanel';
 type Phase =
   | { kind: 'idle' }
   | { kind: 'running' }
-  | { kind: 'done'; result: SearchResult }
+  // clawbackUsed is the ruleset THIS result was actually searched with — not
+  // necessarily the current toggle state, since the toggle can move (or get
+  // synced by a later re-run) after the search that produced this result.
+  | { kind: 'done'; result: SearchResult; clawbackUsed: 'buggy' | 'fixed' }
   | { kind: 'error'; message: string };
 
 export default function SimulatePage() {
@@ -38,7 +41,7 @@ export default function SimulatePage() {
     setRerun({ running: false, error: null });
     try {
       const result = await runSearch(preset.scenario, activeRules);
-      setPhase({ kind: 'done', result });
+      setPhase({ kind: 'done', result, clawbackUsed: clawback });
     } catch (e) {
       console.error('search failed', e);
       setPhase({ kind: 'error', message: GENERIC_ERROR });
@@ -88,6 +91,12 @@ export default function SimulatePage() {
         <div className="mt-4">
           <RuleList rules={activeRules} />
         </div>
+        {afterResult !== null && (
+          <p className="mt-2 text-xs text-neutral-500">
+            위 규칙 목록·토글은 다음 탐색에 쓸 설정입니다. 아래 결과의 "수정 전"은 최초 탐색 당시
+            규칙, "수정 후"는 전액 정산 규칙 기준입니다.
+          </p>
+        )}
       </section>
 
       <button
@@ -103,7 +112,7 @@ export default function SimulatePage() {
         {phase.kind === 'done' && (
           <TraceView
             result={phase.result}
-            clawback={clawback}
+            clawback={phase.clawbackUsed}
             bounds={preset.scenario.bounds}
             params={preset.scenario.params}
           />
