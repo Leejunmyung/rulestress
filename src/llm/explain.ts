@@ -215,6 +215,6 @@ export function parseExplain(
   const rl = raw.match(/RISK_LABEL:\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? 'Business Logic Abuse';
   return {
     rootCause: redactFigures(redactIdentifiers(rc.replace(/RISK_LABEL:[\s\S]*$/, '').trim(), knownIdentifiers)),
-    riskLabel: redactFigures(rl),
+    riskLabel: redactFigures(redactIdentifiers(rl, knownIdentifiers)),
   };
 }

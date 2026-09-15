@@ -76,6 +76,13 @@ describe('explain prompt', () => {
     expect(out.rootCause).toContain('(규칙 이름 생략)');
   });
 
+  it('also scrubs known wire identifiers from RISK_LABEL, not just ROOT_CAUSE', () => {
+    const ids = collectIdentifiers(BUGGY_RULES, [{ invariantId: 'no_benefit_after_cancel', detail: '' }]);
+    const out = parseExplain('ROOT_CAUSE: 설명\nRISK_LABEL: RECLAIM_REWARD', ids);
+    expect(out.riskLabel).not.toMatch(/RECLAIM_REWARD/);
+    expect(out.riskLabel).toBe('(규칙 이름 생략)');
+  });
+
   it('leaves entity id references (o1, r1, l1) untouched', () => {
     const out = parseExplain(
       'ROOT_CAUSE: o1 주문을 취소하면 r1 리워드\nRISK_LABEL: X',
